@@ -126,6 +126,7 @@ async function syncCompletedStepsCount(userId, db = pool) {
 module.exports = {
   findByUserAndStep,
   findByUserForSteps,
+  findByUserAndSteps: findByUserForSteps,
   upsertStatus,
   upsertQuizResult,
   syncCompletedStepsCount,

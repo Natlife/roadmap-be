@@ -35,7 +35,7 @@ async function upsertTopic(topic, db = pool) {
   return result.insertId;
 }
 
-async function replaceTopicRelations(topicId, categoryIds, tagIds, db = pool) {
+async function replaceTopicRelations(topicId, categoryIds, tagIds, allowedGroupIds, db = pool) {
   if (Array.isArray(categoryIds)) {
     await db.query('DELETE FROM topic_categories WHERE topic_id = ?', [topicId]);
     for (const categoryId of toIdList(categoryIds)) {
@@ -51,6 +51,15 @@ async function replaceTopicRelations(topicId, categoryIds, tagIds, db = pool) {
       await db.query('INSERT IGNORE INTO topic_tags (topic_id, tag_id) VALUES (?, ?)', [
         topicId,
         tagId,
+      ]);
+    }
+  }
+  if (Array.isArray(allowedGroupIds)) {
+    await db.query('DELETE FROM group_topics WHERE topic_id = ?', [topicId]);
+    for (const groupId of toIdList(allowedGroupIds)) {
+      await db.query('INSERT IGNORE INTO group_topics (group_id, topic_id) VALUES (?, ?)', [
+        groupId,
+        topicId,
       ]);
     }
   }
@@ -189,10 +198,13 @@ async function replaceStepQuizzes(stepId, quizzes, db = pool) {
   await db.query('DELETE FROM quiz_questions WHERE step_id = ?', [stepId]);
   if (!Array.isArray(quizzes)) return;
   for (const quiz of quizzes) {
+    const prompt = String(quiz.prompt || '').trim();
+    if (!prompt) continue;
+    const correctIndex = Number(quiz.correctIndex ?? quiz.correct_index ?? 0);
     await db.query(
       `INSERT INTO quiz_questions (step_id, prompt, options_json, correct_index, status)
        VALUES (?, ?, ?, ?, 1)`,
-      [stepId, quiz.prompt || '', JSON.stringify(quiz.options || []), quiz.correctIndex || 0]
+      [stepId, prompt, JSON.stringify(quiz.options || []), correctIndex]
     );
   }
 }

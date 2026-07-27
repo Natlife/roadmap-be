@@ -62,24 +62,66 @@ async function upsert(group, db = pool) {
 }
 
 async function replaceRelations(groupId, grantedTopicIds, memberIds, db = pool) {
+  const [oldRows] = await db.query('SELECT user_id FROM group_members WHERE group_id = ?', [
+    groupId,
+  ]);
+  const oldMemberIds = oldRows.map((r) => r.user_id);
+
   await db.query('DELETE FROM group_topics WHERE group_id = ?', [groupId]);
   await db.query('DELETE FROM group_members WHERE group_id = ?', [groupId]);
+
   for (const topicId of toIdList(grantedTopicIds)) {
     await db.query('INSERT IGNORE INTO group_topics (group_id, topic_id) VALUES (?, ?)', [
       groupId,
       topicId,
     ]);
   }
-  for (const userId of toIdList(memberIds)) {
+
+  const newMemberIds = toIdList(memberIds);
+  for (const userId of newMemberIds) {
     await db.query('INSERT IGNORE INTO group_members (group_id, user_id) VALUES (?, ?)', [
       groupId,
       userId,
     ]);
   }
+
+  if (newMemberIds.length > 0) {
+    await db.query(
+      `UPDATE users SET plan = 'GROUP' WHERE id IN (${newMemberIds.map(() => '?').join(',')})`,
+      newMemberIds
+    );
+  }
+
+  const removedMemberIds = oldMemberIds.filter((id) => !newMemberIds.includes(id));
+  for (const rId of removedMemberIds) {
+    const [check] = await db.query(
+      'SELECT COUNT(*) AS total FROM group_members WHERE user_id = ?',
+      [rId]
+    );
+    if (Number(check[0]?.total || 0) === 0) {
+      await db.query("UPDATE users SET plan = 'FREE' WHERE id = ? AND plan = 'GROUP'", [rId]);
+    }
+  }
 }
 
 async function softDelete(id, db = pool) {
+  const [members] = await db.query('SELECT user_id FROM group_members WHERE group_id = ?', [id]);
+  const memberIds = members.map((r) => r.user_id);
+
   await db.query('UPDATE learning_groups SET status = 2 WHERE id = ?', [id]);
+
+  for (const userId of memberIds) {
+    const [check] = await db.query(
+      `SELECT COUNT(*) AS total
+         FROM group_members gm
+         JOIN learning_groups lg ON gm.group_id = lg.id
+        WHERE gm.user_id = ? AND COALESCE(lg.status, 1) <> 2`,
+      [userId]
+    );
+    if (Number(check[0]?.total || 0) === 0) {
+      await db.query("UPDATE users SET plan = 'FREE' WHERE id = ? AND plan = 'GROUP'", [userId]);
+    }
+  }
 }
 
 async function addMember(groupId, userId, db = pool) {
@@ -87,6 +129,7 @@ async function addMember(groupId, userId, db = pool) {
     groupId,
     userId,
   ]);
+  await db.query("UPDATE users SET plan = 'GROUP' WHERE id = ?", [userId]);
 }
 
 async function removeMember(groupId, userId, db = pool) {
@@ -94,6 +137,13 @@ async function removeMember(groupId, userId, db = pool) {
     groupId,
     userId,
   ]);
+  const [check] = await db.query(
+    'SELECT COUNT(*) AS total FROM group_members WHERE user_id = ?',
+    [userId]
+  );
+  if (Number(check[0]?.total || 0) === 0) {
+    await db.query("UPDATE users SET plan = 'FREE' WHERE id = ? AND plan = 'GROUP'", [userId]);
+  }
 }
 
 module.exports = {

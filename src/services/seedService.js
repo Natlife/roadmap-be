@@ -266,8 +266,14 @@ async function ensureCoreSchemaCompatibility(connection) {
     if (!hasBlockType) {
       await connection.query(
         `ALTER TABLE content_blocks
-         ADD COLUMN block_type VARCHAR(30) NOT NULL DEFAULT 'PARAGRAPH' AFTER step_id`
+         ADD COLUMN block_type VARCHAR(50) NOT NULL DEFAULT 'PARAGRAPH' AFTER step_id`
       );
+    } else {
+      try {
+        await connection.query(
+          `ALTER TABLE content_blocks MODIFY block_type VARCHAR(50) NOT NULL DEFAULT 'PARAGRAPH'`
+        );
+      } catch (_) {}
     }
 
     if (hasLegacyType) {
@@ -297,14 +303,72 @@ async function ensureCoreSchemaCompatibility(connection) {
     );
   }
 
-  if (await tableExists(connection, 'users') && await columnExists(connection, 'users', 'plan')) {
-    await connection.query(
-      `UPDATE users
-       SET plan = CASE
-         WHEN UPPER(plan) = 'GROUPPRO' THEN 'GROUP'
-         ELSE UPPER(COALESCE(plan, 'FREE'))
-       END`
-    );
+  if (await tableExists(connection, 'users')) {
+    if (await columnExists(connection, 'users', 'plan')) {
+      await connection.query(
+        `UPDATE users
+         SET plan = CASE
+           WHEN UPPER(plan) = 'GROUPPRO' THEN 'GROUP'
+           ELSE UPPER(COALESCE(plan, 'FREE'))
+         END`
+      );
+    }
+    if (!(await columnExists(connection, 'users', 'streak_days'))) {
+      await connection.query('ALTER TABLE users ADD COLUMN streak_days INT DEFAULT 0');
+    } else {
+      await connection.query('ALTER TABLE users MODIFY streak_days INT DEFAULT 0');
+    }
+    if (!(await columnExists(connection, 'users', 'completed_steps_count'))) {
+      await connection.query('ALTER TABLE users ADD COLUMN completed_steps_count INT DEFAULT 0');
+    } else {
+      await connection.query('ALTER TABLE users MODIFY completed_steps_count INT DEFAULT 0');
+    }
+  }
+
+  if (await tableExists(connection, 'categories')) {
+    try {
+      await connection.query('ALTER TABLE categories ADD CONSTRAINT unique_category_title UNIQUE (title)');
+    } catch (_) {}
+  }
+
+  if (await tableExists(connection, 'tags')) {
+    try {
+      await connection.query('ALTER TABLE tags ADD CONSTRAINT unique_tag_title UNIQUE (title)');
+    } catch (_) {}
+  }
+
+  if (await tableExists(connection, 'topics')) {
+    try {
+      await connection.query('ALTER TABLE topics ADD CONSTRAINT unique_topic_title UNIQUE (title)');
+    } catch (_) {}
+  }
+
+  const longtextColumns = [
+    { table: 'content_blocks', col: 'body' },
+    { table: 'content_blocks', col: 'items_json' },
+    { table: 'content_blocks', col: 'media_url' },
+    { table: 'content_blocks', col: 'caption' },
+    { table: 'content_blocks', col: 'title' },
+    { table: 'steps', col: 'summary' },
+    { table: 'steps', col: 'note' },
+    { table: 'steps', col: 'theory' },
+    { table: 'steps', col: 'code_snippet' },
+    { table: 'steps', col: 'checklist_json' },
+    { table: 'lessons', col: 'summary' },
+    { table: 'topics', col: 'description' },
+    { table: 'categories', col: 'description' },
+    { table: 'tags', col: 'description' },
+    { table: 'quiz_questions', col: 'prompt' },
+    { table: 'quiz_questions', col: 'options_json' },
+    { table: 'user_step_progress', col: 'completed_checklist_json' },
+  ];
+
+  for (const item of longtextColumns) {
+    if (await tableExists(connection, item.table) && await columnExists(connection, item.table, item.col)) {
+      try {
+        await connection.query(`ALTER TABLE ${item.table} MODIFY ${item.col} LONGTEXT NULL`);
+      } catch (_) {}
+    }
   }
 
   for (const tableName of ['topics', 'lessons', 'steps']) {
@@ -532,6 +596,19 @@ async function initDatabaseSchema() {
         group_id INT NOT NULL,
         topic_id INT NOT NULL,
         PRIMARY KEY (group_id, topic_id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;`,
+
+      // 17. Plan Requests
+      `CREATE TABLE IF NOT EXISTS plan_requests (
+        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NULL,
+        name VARCHAR(255) NOT NULL,
+        phone VARCHAR(50) NOT NULL,
+        content TEXT NOT NULL,
+        status VARCHAR(30) DEFAULT 'PENDING',
+        admin_note TEXT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;`,
     ];
 

@@ -1,6 +1,7 @@
 const adminService = require('../services/adminService');
 const { successResponse } = require('../utils/baseResponse');
 const { asyncHandler } = require('../middleware/error');
+const { toStatus } = require('../utils/taxonomyValidation');
 
 /** Merge an id coming from the route params with the request body. */
 function withId(req) {
@@ -9,7 +10,7 @@ function withId(req) {
 
 /* --------------------------------------------------------------- categories */
 const getAllCategories = asyncHandler(async (req, res) =>
-  res.json(successResponse(await adminService.categories.list(), 'Fetched all categories'))
+  res.json(successResponse(await adminService.categories.list({ search: req.query.search, status: toStatus(req.query.status) }), 'Fetched all categories'))
 );
 const createCategory = asyncHandler(async (req, res) =>
   res.json(successResponse(await adminService.categories.create(req.body), 'Category created successfully'))
@@ -18,13 +19,13 @@ const updateCategory = asyncHandler(async (req, res) =>
   res.json(successResponse(await adminService.categories.update(req.params.id, req.body), 'Category updated successfully'))
 );
 const deleteCategory = asyncHandler(async (req, res) => {
-  await adminService.categories.remove(req.params.id);
+  await adminService.categories.remove(req.params.id, { force: req.query.force === 'true' });
   res.json(successResponse(null, 'Category deleted successfully'));
 });
 
 /* --------------------------------------------------------------------- tags */
 const getAllTags = asyncHandler(async (req, res) =>
-  res.json(successResponse(await adminService.tags.list(), 'Fetched all tags'))
+  res.json(successResponse(await adminService.tags.list({ search: req.query.search, status: toStatus(req.query.status) }), 'Fetched all tags'))
 );
 const createTag = asyncHandler(async (req, res) =>
   res.json(successResponse(await adminService.tags.create(req.body), 'Tag created successfully'))
@@ -33,7 +34,7 @@ const updateTag = asyncHandler(async (req, res) =>
   res.json(successResponse(await adminService.tags.update(req.params.id, req.body), 'Tag updated successfully'))
 );
 const deleteTag = asyncHandler(async (req, res) => {
-  await adminService.tags.remove(req.params.id);
+  await adminService.tags.remove(req.params.id, { force: req.query.force === 'true' });
   res.json(successResponse(null, 'Tag deleted successfully'));
 });
 

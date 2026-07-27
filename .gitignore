@@ -69,3 +69,6 @@ Desktop.ini
 # Testing & Coverage dumps
 .coverage
 htmlcov/
+
+# Local flow/integration tests (kept out of VCS)
+/tests/

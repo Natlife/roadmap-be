@@ -1,10 +1,13 @@
 const pool = require('../config/db');
 const taxonomyRepo = require('../repositories/taxonomyRepository');
 const contentRepo = require('../repositories/contentWriteRepository');
+const readRepo = require('../repositories/topicReadRepository');
 const groupRepo = require('../repositories/groupRepository');
 const { ApiError } = require('../middleware/error');
 const { toId } = require('../utils/parse');
 const { mapCategoryRow, mapTagRow, mapLearningGroupRow } = require('../utils/apiMappers');
+const { validateCreate: validateTaxonomyCreate, validateUpdate: validateTaxonomyUpdate } = require('../utils/taxonomyValidation');
+const { sanitizeRichText } = require('../utils/htmlSanitize');
 
 /* --------------------------------------------------------------- taxonomy */
 
@@ -13,24 +16,47 @@ function taxonomyService(kind) {
   const mapper = kind === 'categories' ? mapCategoryRow : mapTagRow;
   const label = kind === 'categories' ? 'Category' : 'Tag';
 
+  // attach usageCount (how many topics link to this item) to the mapped shape
+  const present = (row) => ({ ...mapper(row), usageCount: Number(row.usageCount ?? 0) });
+
   return {
-    async list() {
-      const rows = await repo.findAll();
-      return rows.map(mapper);
+    async list({ search, status } = {}) {
+      const rows = await repo.findAll({ search: search ? String(search).trim() : undefined, status });
+      return rows.map(present);
     },
-    async create({ id, title, description }) {
-      if (!title || !String(title).trim()) throw ApiError.badRequest('Title is required');
-      const newId = await repo.upsert({ id, title, description });
-      const row = await repo.findById(newId);
-      return mapper(row || { id: newId, title, description, status: 1 });
+    async create(body) {
+      const data = validateTaxonomyCreate(body);
+      if (await repo.existsByTitle(data.title)) {
+        throw ApiError.conflict(`${label} "${data.title}" already exists`);
+      }
+      const id = await repo.insert(data);
+      return present(await repo.findById(id));
     },
     async update(id, body) {
-      await repo.update(id, body);
-      const row = await repo.findById(id);
-      if (!row) throw ApiError.notFound(`${label} not found`);
-      return mapper(row);
+      const existing = await repo.findById(id);
+      if (!existing) throw ApiError.notFound(`${label} not found`);
+      const data = validateTaxonomyUpdate(body);
+      if (data.title && (await repo.existsByTitle(data.title, id))) {
+        throw ApiError.conflict(`${label} "${data.title}" already exists`);
+      }
+      await repo.update(id, data);
+      return present(await repo.findById(id));
     },
-    async remove(id) {
+    // Delete is blocked while the item is linked to topics, unless force=true
+    // (which detaches the links first). Keeps taxonomy referentially clean even
+    // though the DB has no FK constraints.
+    async remove(id, { force = false } = {}) {
+      const existing = await repo.findById(id);
+      if (!existing) throw ApiError.notFound(`${label} not found`);
+      const usage = await repo.countUsage(id);
+      if (usage > 0 && !force) {
+        throw new ApiError(
+          `${label} is linked to ${usage} topic${usage === 1 ? '' : 's'}. Detach them first or delete with force.`,
+          409,
+          { usageCount: usage }
+        );
+      }
+      if (usage > 0 && force) await repo.detachAll(id);
       await repo.remove(id);
     },
   };
@@ -45,8 +71,8 @@ async function saveTopic(body) {
   if (!body.title || !String(body.title).trim()) throw ApiError.badRequest('Title is required');
   return pool.withTransaction(async (conn) => {
     const topicId = await contentRepo.upsertTopic(body, conn);
-    await contentRepo.replaceTopicRelations(topicId, body.categoryIds, body.tagIds, conn);
-    return { id: topicId, title: body.title, categoryIds: body.categoryIds, tagIds: body.tagIds };
+    await contentRepo.replaceTopicRelations(topicId, body.categoryIds, body.tagIds, body.allowedGroupIds, conn);
+    return { id: topicId, title: body.title, categoryIds: body.categoryIds, tagIds: body.tagIds, allowedGroupIds: body.allowedGroupIds };
   });
 }
 
@@ -69,11 +95,18 @@ async function deleteLesson(id) {
 /* ------------------------------------------------------------------ steps */
 
 async function saveStep(body) {
-  if (toId(body.lessonId) == null) throw ApiError.badRequest('A valid lessonId is required');
+  let lessonId = toId(body.lessonId);
+  const stepId = toId(body.id);
+  if (lessonId == null && stepId != null) {
+    const existing = await readRepo.findStepById(stepId);
+    if (existing) lessonId = toId(existing.lesson_id);
+  }
+  if (lessonId == null) throw ApiError.badRequest('A valid lessonId is required');
+  body.lessonId = lessonId;
   return pool.withTransaction(async (conn) => {
-    const stepId = await contentRepo.upsertStep(body, conn);
-    await contentRepo.replaceStepPrerequisites(stepId, body.prerequisiteStepIds, conn);
-    return { id: stepId, lessonId: body.lessonId, title: body.title };
+    const savedId = await contentRepo.upsertStep(body, conn);
+    await contentRepo.replaceStepPrerequisites(savedId, body.prerequisiteStepIds, conn);
+    return { id: savedId, lessonId: body.lessonId, title: body.title };
   });
 }
 
@@ -81,8 +114,18 @@ async function deleteStep(id) {
   await contentRepo.deleteStep(id);
 }
 
+// Block types whose `body` holds rich HTML and must be sanitized before storing.
+const RICH_BLOCK_TYPES = new Set(['RICHTEXT', 'PARAGRAPH', 'CALLOUT', 'QUOTE', 'HEADING']);
+
 async function updateStepBlocks(stepId, blocks) {
-  await contentRepo.replaceStepBlocks(stepId, blocks);
+  const list = Array.isArray(blocks) ? blocks : [];
+  const cleaned = list.map((block, index) => {
+    const type = String(block.type || block.blockType || 'RICHTEXT').toUpperCase();
+    // CODE keeps its body raw (it is escaped when rendered); rich blocks are sanitized.
+    const body = RICH_BLOCK_TYPES.has(type) ? sanitizeRichText(block.body) : (block.body ?? '');
+    return { ...block, type, body, orderIndex: block.orderIndex ?? index };
+  });
+  await contentRepo.replaceStepBlocks(stepId, cleaned);
 }
 
 async function updateStepQuizzes(stepId, quizzes) {

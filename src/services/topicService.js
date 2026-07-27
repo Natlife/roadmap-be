@@ -1,5 +1,7 @@
 const repo = require('../repositories/topicReadRepository');
 const progressRepo = require('../repositories/progressRepository');
+const userRepo = require('../repositories/userRepository');
+const { ApiError } = require('../middleware/error');
 const { mapStepRow, mapLessonRow, mapTopicRow } = require('../utils/apiMappers');
 
 function groupBy(rows, keyField) {
@@ -24,26 +26,23 @@ async function getTopicTree(topicId = null, userId = null) {
   if (topicRows.length === 0) return [];
 
   const topicIds = topicRows.map((t) => t.id);
-
-  const [categoryRows, tagRows, lessonRows] = await Promise.all([
-    repo.findCategoriesForTopics(topicIds),
-    repo.findTagsForTopics(topicIds),
+  const [categoriesByTopic, tagsByTopic, lessonRows] = await Promise.all([
+    repo.findCategoriesForTopics(topicIds).then((rows) => groupBy(rows, 'topic_id')),
+    repo.findTagsForTopics(topicIds).then((rows) => groupBy(rows, 'topic_id')),
     repo.findLessonsForTopics(topicIds),
   ]);
 
   const lessonIds = lessonRows.map((l) => l.id);
-  const stepRows = await repo.findStepsForLessons(lessonIds);
-  const stepIds = stepRows.map((s) => s.id);
+  const stepRows = lessonIds.length ? await repo.findStepsForLessons(lessonIds) : [];
 
-  const [blockRows, quizRows, prereqRows, progressMap] = await Promise.all([
-    repo.findBlocksForSteps(stepIds),
-    repo.findQuizzesForSteps(stepIds),
-    repo.findPrerequisitesForSteps(stepIds),
-    progressRepo.findByUserForSteps(userId, stepIds),
+  const stepIds = stepRows.map((s) => s.id);
+  const [blockRows, quizRows, prereqRows, userProgressMap] = await Promise.all([
+    stepIds.length ? repo.findBlocksForSteps(stepIds) : [],
+    stepIds.length ? repo.findQuizzesForSteps(stepIds) : [],
+    stepIds.length ? repo.findPrerequisitesForSteps(stepIds) : [],
+    stepIds.length ? progressRepo.findByUserForSteps(userId, stepIds) : new Map(),
   ]);
 
-  const categoriesByTopic = groupBy(categoryRows, 'topic_id');
-  const tagsByTopic = groupBy(tagRows, 'topic_id');
   const lessonsByTopic = groupBy(lessonRows, 'topic_id');
   const stepsByLesson = groupBy(stepRows, 'lesson_id');
   const blocksByStep = groupBy(blockRows, 'step_id');
@@ -52,7 +51,11 @@ async function getTopicTree(topicId = null, userId = null) {
 
   const buildStep = (stepRow) => {
     const key = String(stepRow.id);
-    const progress = progressMap.get(key) || {};
+    const progress = userProgressMap.get(key) || {
+      progressStatus: stepRow.prerequisites_count > 0 ? 'LOCKED' : 'NOT_STARTED',
+      completedChecklist: [],
+      quizScore: null,
+    };
     return mapStepRow(stepRow, {
       prerequisiteStepIds: (prereqsByStep.get(key) || []).map((r) => r.prerequisite_step_id),
       contentBlocks: blocksByStep.get(key) || [],
@@ -81,8 +84,36 @@ async function getTopicTree(topicId = null, userId = null) {
 
 /** Build a single step payload (with progress) for the step-detail endpoint. */
 async function getStepDetail(stepId, userId = null) {
-  const stepRow = await repo.findStepById(stepId);
+  const stepRow = await repo.findStepWithAccess(stepId);
   if (!stepRow) return null;
+
+  const accessLevel = String(stepRow.effectiveAccessLevel || 'FREE').toUpperCase();
+  if (accessLevel !== 'FREE') {
+    if (!userId) {
+      throw ApiError.unauthorized('Authentication required to access this content');
+    }
+    const user = await userRepo.findByIdWithRole(userId);
+    if (!user) throw ApiError.unauthorized('User not found');
+
+    const roleName = String(user.role || '').toUpperCase();
+    const isSystemAdmin = roleName === 'ROLE_ADMIN' || roleName === 'ADMIN';
+
+    if (!isSystemAdmin) {
+      if (accessLevel === 'PREMIUM') {
+        const userPlan = String(user.plan || 'FREE').toUpperCase();
+        if (userPlan !== 'PREMIUM' && userPlan !== 'GROUP') {
+          throw ApiError.forbidden('Upgrade to Premium to view this step content');
+        }
+      } else if (accessLevel === 'GROUP') {
+        const userGroups = await userRepo.findGroupsForUser(userId);
+        const userGroupIds = userGroups.map((g) => String(g.id));
+        const hasGroupAccess = stepRow.allowedGroupIds.some((gid) => userGroupIds.includes(gid));
+        if (!hasGroupAccess) {
+          throw ApiError.forbidden('Access restricted to private group members');
+        }
+      }
+    }
+  }
 
   const [blockRows, quizRows, prereqRows, progress] = await Promise.all([
     repo.findBlocksForSteps([stepRow.id]),

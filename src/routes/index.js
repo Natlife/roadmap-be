@@ -43,9 +43,18 @@ router.get('/steps/:stepId', authMiddleware({ optional: true }), topicController
 router.put('/steps/:stepId/progress', authMiddleware(), topicController.updateStepProgress);
 router.post('/steps/:stepId/quiz', authMiddleware(), topicController.submitQuiz);
 
+const planRequestController = require('../controllers/planRequestController');
+
+/* ----------------------------------------------------------- plan requests */
+router.post('/plan-requests', authMiddleware({ optional: true }), planRequestController.createRequest);
+router.get('/plan-requests/my', authMiddleware(), planRequestController.getMyRequests);
+
 /* ------------------------------------------------------------------- admin */
 const admin = express.Router();
 admin.use(authMiddleware({ role: 'ADMIN' }));
+
+admin.get('/plan-requests', planRequestController.getAllRequests);
+admin.patch('/plan-requests/:id', planRequestController.updateStatus);
 
 admin.get('/categories', adminController.getAllCategories);
 admin.post('/categories', adminController.createCategory);
@@ -80,6 +89,9 @@ admin.post('/groups/:groupId/members/:userId', adminController.addMemberToGroup)
 admin.delete('/groups/:groupId/members/:userId', adminController.removeMemberFromGroup);
 
 admin.post('/sync', adminController.syncFullAdminData);
+
+// admin user management (create). read/update/delete live under /users below.
+admin.post('/users', userController.createUser);
 
 router.use('/admin', admin);
 
