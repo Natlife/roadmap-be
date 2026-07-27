@@ -123,21 +123,13 @@ async function findStepWithAccess(stepId, db = pool) {
   if (!rows[0]) return null;
 
   const step = rows[0];
-  const [stepGroups, lessonGroups, topicGroups] = await Promise.all([
-    db.query(`SELECT group_id FROM group_steps WHERE step_id = ?`, [stepId]),
-    db.query(`SELECT group_id FROM group_lessons WHERE lesson_id = ?`, [step.lesson_id]),
-    db.query(`SELECT group_id FROM group_topics WHERE topic_id = ?`, [step.topic_id]),
-  ]);
-
-  const allowedGroupIds = Array.from(
-    new Set([
-      ...stepGroups[0].map((g) => String(g.group_id)),
-      ...lessonGroups[0].map((g) => String(g.group_id)),
-      ...topicGroups[0].map((g) => String(g.group_id)),
-    ])
+  const [topicGroups] = await db.query(
+    `SELECT group_id FROM group_topics WHERE topic_id = ?`, [step.topic_id]
   );
 
-  let effectiveAccessLevel = step.access_level || step.lesson_access_level || step.topic_access_level || 'FREE';
+  const allowedGroupIds = topicGroups.map((g) => String(g.group_id));
+
+  const effectiveAccessLevel = step.access_level || step.lesson_access_level || step.topic_access_level || 'FREE';
 
   return {
     ...step,
