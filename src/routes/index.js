@@ -88,7 +88,15 @@ admin.delete('/groups/:id', adminController.deleteGroup);
 admin.post('/groups/:groupId/members/:userId', adminController.addMemberToGroup);
 admin.delete('/groups/:groupId/members/:userId', adminController.removeMemberFromGroup);
 
+const multer = require('multer');
+const uploadRam = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
+
+admin.post('/gdrive/parse-folder', adminController.parseGDriveFolder);
+admin.post('/slides/parse-pdf', uploadRam.single('file'), adminController.parsePdfSlides);
+admin.post('/upload/images', uploadRam.array('files', 100), adminController.uploadImages);
 admin.post('/sync', adminController.syncFullAdminData);
+
+
 
 // admin user management (create). read/update/delete live under /users below.
 admin.post('/users', userController.createUser);

@@ -40,6 +40,9 @@ coverage/
 .node_repl_history
 
 # User Uploads / Media (Runtime generated)
+upload/
+upload/*
+!upload/.gitkeep
 uploads/
 public/uploads/
 temp/

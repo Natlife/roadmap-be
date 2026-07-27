@@ -102,6 +102,68 @@ const syncFullAdminData = asyncHandler(async (req, res) => {
   res.json(successResponse(null, 'Full admin data synchronized to MySQL successfully'));
 });
 
+/* ------------------------------------------------------------------ gdrive */
+const { parseGDriveFolder } = require('../services/gdriveFolderParser');
+const { parsePdfSlides } = require('../services/pdfSlideParser');
+
+const parseGDriveFolderController = asyncHandler(async (req, res) => {
+  const { url } = req.body;
+  const data = await parseGDriveFolder(url);
+  res.json(successResponse(data, `Extracted ${data.count} image links from Google Drive folder`));
+});
+
+const parsePdfSlidesController = asyncHandler(async (req, res) => {
+  if (!req.file || !req.file.buffer) {
+    throw new (require('../middleware/error').ApiError)(400, 'PDF file is required (field name: "file")');
+  }
+  const data = await parsePdfSlides(req.file.buffer);
+  res.json(successResponse(data, `Parsed ${data.numPages} slides from PDF`));
+});
+
+const fs = require('fs');
+const path = require('path');
+
+const ALLOWED_IMAGE_EXTS = ['.png', '.jpg', '.jpeg', '.webp', '.gif', '.svg'];
+
+const uploadImagesController = asyncHandler(async (req, res) => {
+  const files = req.files || (req.file ? [req.file] : []);
+  if (!files || files.length === 0) {
+    throw new (require('../middleware/error').ApiError)(400, 'No image files uploaded (field name: "files")');
+  }
+
+  // Validate image file formats
+  for (const file of files) {
+    const ext = path.extname(file.originalname || '').toLowerCase();
+    const isMimeImage = file.mimetype && file.mimetype.startsWith('image/');
+    const isExtImage = ALLOWED_IMAGE_EXTS.includes(ext);
+
+    if (!isMimeImage && !isExtImage) {
+      throw new (require('../middleware/error').ApiError)(
+        400,
+        `File "${file.originalname}" is not a valid image. Only PNG, JPG, JPEG, WEBP, GIF, SVG formats are allowed.`
+      );
+    }
+  }
+
+  const uploadDir = path.join(__dirname, '..', '..', 'upload', 'slides');
+  if (!fs.existsSync(uploadDir)) {
+    fs.mkdirSync(uploadDir, { recursive: true });
+  }
+
+  const urls = [];
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    const ext = path.extname(file.originalname || '').toLowerCase() || '.png';
+    const filename = `img_${Date.now()}_${i + 1}_${Math.random().toString(36).slice(2, 7)}${ext}`;
+    const filePath = path.join(uploadDir, filename);
+    fs.writeFileSync(filePath, file.buffer);
+    urls.push(`/upload/slides/${filename}`);
+  }
+
+  res.json(successResponse({ count: urls.length, urls }, `Uploaded ${urls.length} images successfully`));
+});
+
+
 module.exports = {
   getAllCategories, createCategory, updateCategory, deleteCategory,
   getAllTags, createTag, updateTag, deleteTag,
@@ -111,4 +173,10 @@ module.exports = {
   getAllGroups, getGroupDetail, createGroup, updateGroup: createGroup, deleteGroup,
   addMemberToGroup, removeMemberFromGroup,
   syncFullAdminData,
+  parseGDriveFolder: parseGDriveFolderController,
+  parsePdfSlides: parsePdfSlidesController,
+  uploadImages: uploadImagesController,
 };
+
+
+

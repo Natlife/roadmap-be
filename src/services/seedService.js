@@ -1,29 +1,22 @@
-const pool = require('../config/db');
-const bcrypt = require('bcryptjs');
-const fs = require('fs');
-const path = require('path');
-const { config } = require('../config/env');
+const pool = require("../config/db");
 
 async function columnExists(connection, tableName, columnName) {
   const [rows] = await connection.query(
     `SHOW COLUMNS FROM ${tableName} LIKE ?`,
-    [columnName]
+    [columnName],
   );
   return rows.length > 0;
 }
 
 async function tableExists(connection, tableName) {
-  const [rows] = await connection.query(
-    `SHOW TABLES LIKE ?`,
-    [tableName]
-  );
+  const [rows] = await connection.query(`SHOW TABLES LIKE ?`, [tableName]);
   return rows.length > 0;
 }
 
 async function indexExists(connection, tableName, indexName) {
   const [rows] = await connection.query(
     `SHOW INDEX FROM ${tableName} WHERE Key_name = ?`,
-    [indexName]
+    [indexName],
   );
   return rows.length > 0;
 }
@@ -33,245 +26,106 @@ async function tableRowCount(connection, tableName) {
     return 0;
   }
 
-  const [rows] = await connection.query(`SELECT COUNT(*) AS total FROM ${tableName}`);
+  const [rows] = await connection.query(
+    `SELECT COUNT(*) AS total FROM ${tableName}`,
+  );
   return Number(rows[0]?.total || 0);
-}
-
-function getSpringSeedFilePath() {
-  const candidates = [
-    path.resolve(__dirname, '../../../seed_data.sql'),
-    path.resolve(__dirname, '../../../spb-code-base/src/main/resources/seed_data.sql'),
-  ];
-
-  return candidates.find((candidate) => fs.existsSync(candidate)) || null;
-}
-
-function extractInsertStatement(sqlContent, tableName) {
-  const escapedTableName = tableName.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
-  const startPattern = new RegExp(`INSERT\\s+INTO\\s+\`${escapedTableName}\``, 'i');
-  const startMatch = startPattern.exec(sqlContent);
-
-  if (!startMatch || startMatch.index == null) {
-    return null;
-  }
-
-  const startIndex = startMatch.index;
-  let inSingleQuote = false;
-  let inBacktick = false;
-  let escaped = false;
-
-  for (let index = startIndex; index < sqlContent.length; index += 1) {
-    const char = sqlContent[index];
-
-    if (escaped) {
-      escaped = false;
-      continue;
-    }
-
-    if (char === '\\') {
-      escaped = true;
-      continue;
-    }
-
-    if (char === '\'' && !inBacktick) {
-      inSingleQuote = !inSingleQuote;
-      continue;
-    }
-
-    if (char === '`' && !inSingleQuote) {
-      inBacktick = !inBacktick;
-      continue;
-    }
-
-    if (char === ';' && !inSingleQuote && !inBacktick) {
-      return sqlContent.slice(startIndex, index + 1);
-    }
-  }
-
-  return null;
-}
-
-async function runSeedInsertIgnore(connection, sqlContent, tableName) {
-  const insertStatement = extractInsertStatement(sqlContent, tableName);
-  if (!insertStatement) {
-    return false;
-  }
-
-  const normalizedStatement = insertStatement.replace(/^INSERT\s+INTO/i, 'INSERT IGNORE INTO');
-  await connection.query(normalizedStatement);
-  return true;
-}
-
-async function ensureSpringSeedContent(connection) {
-  const seedFilePath = getSpringSeedFilePath();
-  if (!seedFilePath) {
-    return;
-  }
-
-  const counts = {
-    categories: await tableRowCount(connection, 'categories'),
-    tags: await tableRowCount(connection, 'tags'),
-    topics: await tableRowCount(connection, 'topics'),
-    topicCategories: await tableRowCount(connection, 'topic_categories'),
-    topicTags: await tableRowCount(connection, 'topic_tags'),
-    lessons: await tableRowCount(connection, 'lessons'),
-    steps: await tableRowCount(connection, 'steps'),
-    contentBlocks: await tableRowCount(connection, 'content_blocks'),
-    quizQuestions: await tableRowCount(connection, 'quiz_questions'),
-    learningGroups: await tableRowCount(connection, 'learning_groups'),
-    groupTopics: await tableRowCount(connection, 'group_topics'),
-  };
-
-  const shouldBootstrapCoreContent =
-    counts.topics === 0 && counts.lessons === 0 && counts.steps === 0;
-  const shouldBackfillSteps =
-    counts.lessons > 0 &&
-    (counts.steps === 0 || counts.contentBlocks === 0 || counts.quizQuestions === 0);
-
-  const shouldBackfillTaxonomyRelations =
-    counts.topics > 0 && (counts.topicCategories === 0 || counts.topicTags === 0);
-
-  const shouldBackfillGroups =
-    counts.learningGroups === 0 && counts.groupTopics === 0;
-
-  if (
-    !shouldBootstrapCoreContent &&
-    !shouldBackfillSteps &&
-    !shouldBackfillTaxonomyRelations &&
-    !shouldBackfillGroups &&
-    counts.categories > 0 &&
-    counts.tags > 0
-  ) {
-    return;
-  }
-
-  const sqlContent = fs.readFileSync(seedFilePath, 'utf8');
-  const tablesToBackfill = [];
-
-  if (counts.categories === 0) {
-    tablesToBackfill.push('categories');
-  }
-  if (counts.tags === 0) {
-    tablesToBackfill.push('tags');
-  }
-
-  if (shouldBootstrapCoreContent) {
-    tablesToBackfill.push(
-      'topics',
-      'topic_categories',
-      'topic_tags',
-      'lessons',
-      'steps',
-      'content_blocks',
-      'quiz_questions'
-    );
-  } else {
-    if (counts.topics === 0) {
-      tablesToBackfill.push('topics');
-    }
-    if (counts.lessons === 0) {
-      tablesToBackfill.push('lessons');
-    }
-    if (counts.steps === 0) {
-      tablesToBackfill.push('steps');
-    }
-    if (counts.contentBlocks === 0) {
-      tablesToBackfill.push('content_blocks');
-    }
-    if (counts.quizQuestions === 0) {
-      tablesToBackfill.push('quiz_questions');
-    }
-    if (counts.topicCategories === 0) {
-      tablesToBackfill.push('topic_categories');
-    }
-    if (counts.topicTags === 0) {
-      tablesToBackfill.push('topic_tags');
-    }
-  }
-
-  if (shouldBackfillGroups) {
-    tablesToBackfill.push('learning_groups', 'group_topics');
-  }
-
-  const uniqueTables = Array.from(new Set(tablesToBackfill));
-  if (uniqueTables.length === 0) {
-    return;
-  }
-
-  for (const tableName of uniqueTables) {
-    const executed = await runSeedInsertIgnore(connection, sqlContent, tableName);
-    if (executed) {
-      console.log(`[SeedService] Backfilled ${tableName} from Spring seed data`);
-    }
-  }
 }
 
 async function ensureUserStepProgressSchema(connection) {
   const alterations = [];
 
-  if (!(await columnExists(connection, 'user_step_progress', 'completed_checklist_json'))) {
-    alterations.push(`ADD COLUMN completed_checklist_json LONGTEXT NULL AFTER progress_status`);
+  if (
+    !(await columnExists(
+      connection,
+      "user_step_progress",
+      "completed_checklist_json",
+    ))
+  ) {
+    alterations.push(
+      `ADD COLUMN completed_checklist_json LONGTEXT NULL AFTER progress_status`,
+    );
   }
-  if (!(await columnExists(connection, 'user_step_progress', 'quiz_score'))) {
-    alterations.push(`ADD COLUMN quiz_score INT NOT NULL DEFAULT 0 AFTER completed_checklist_json`);
+  if (!(await columnExists(connection, "user_step_progress", "quiz_score"))) {
+    alterations.push(
+      `ADD COLUMN quiz_score INT NOT NULL DEFAULT 0 AFTER completed_checklist_json`,
+    );
   }
-  if (!(await columnExists(connection, 'user_step_progress', 'last_accessed_at'))) {
-    alterations.push(`ADD COLUMN last_accessed_at DATETIME DEFAULT CURRENT_TIMESTAMP AFTER quiz_score`);
+  if (
+    !(await columnExists(connection, "user_step_progress", "last_accessed_at"))
+  ) {
+    alterations.push(
+      `ADD COLUMN last_accessed_at DATETIME DEFAULT CURRENT_TIMESTAMP AFTER quiz_score`,
+    );
   }
-  if (!(await columnExists(connection, 'user_step_progress', 'status'))) {
+  if (!(await columnExists(connection, "user_step_progress", "status"))) {
     alterations.push(`ADD COLUMN status INT DEFAULT 1 AFTER last_accessed_at`);
   }
-  if (!(await columnExists(connection, 'user_step_progress', 'created_at'))) {
-    alterations.push(`ADD COLUMN created_at DATETIME DEFAULT CURRENT_TIMESTAMP AFTER status`);
-  }
-  if (!(await columnExists(connection, 'user_step_progress', 'updated_at'))) {
+  if (!(await columnExists(connection, "user_step_progress", "created_at"))) {
     alterations.push(
-      `ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP AFTER created_at`
+      `ADD COLUMN created_at DATETIME DEFAULT CURRENT_TIMESTAMP AFTER status`,
+    );
+  }
+  if (!(await columnExists(connection, "user_step_progress", "updated_at"))) {
+    alterations.push(
+      `ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP AFTER created_at`,
     );
   }
 
   if (alterations.length > 0) {
-    await connection.query(`ALTER TABLE user_step_progress ${alterations.join(', ')}`);
+    await connection.query(
+      `ALTER TABLE user_step_progress ${alterations.join(", ")}`,
+    );
   }
 
-  if (await columnExists(connection, 'user_step_progress', 'score')) {
+  if (await columnExists(connection, "user_step_progress", "score")) {
     await connection.query(
       `UPDATE user_step_progress
        SET quiz_score = CASE
          WHEN (quiz_score IS NULL OR quiz_score = 0) AND score IS NOT NULL THEN score
          ELSE quiz_score
-       END`
+       END`,
     );
   }
 
-  if (!(await indexExists(connection, 'user_step_progress', 'user_step_unique'))) {
+  if (
+    !(await indexExists(connection, "user_step_progress", "user_step_unique"))
+  ) {
     await connection.query(
-      `ALTER TABLE user_step_progress ADD UNIQUE KEY user_step_unique (user_id, step_id)`
+      `ALTER TABLE user_step_progress ADD UNIQUE KEY user_step_unique (user_id, step_id)`,
     );
   }
 }
 
 async function ensureCoreSchemaCompatibility(connection) {
-  const hasSteps = await tableExists(connection, 'steps');
-  const hasLegacyStepItems = await tableExists(connection, 'step_items');
+  const hasSteps = await tableExists(connection, "steps");
+  const hasLegacyStepItems = await tableExists(connection, "step_items");
 
   if (!hasSteps && hasLegacyStepItems) {
-    await connection.query('RENAME TABLE step_items TO steps');
+    await connection.query("RENAME TABLE step_items TO steps");
   }
 
-  if (await tableExists(connection, 'content_blocks')) {
-    const hasBlockType = await columnExists(connection, 'content_blocks', 'block_type');
-    const hasLegacyType = await columnExists(connection, 'content_blocks', 'type');
+  if (await tableExists(connection, "content_blocks")) {
+    const hasBlockType = await columnExists(
+      connection,
+      "content_blocks",
+      "block_type",
+    );
+    const hasLegacyType = await columnExists(
+      connection,
+      "content_blocks",
+      "type",
+    );
 
     if (!hasBlockType) {
       await connection.query(
         `ALTER TABLE content_blocks
-         ADD COLUMN block_type VARCHAR(50) NOT NULL DEFAULT 'PARAGRAPH' AFTER step_id`
+         ADD COLUMN block_type VARCHAR(50) NOT NULL DEFAULT 'PARAGRAPH' AFTER step_id`,
       );
     } else {
       try {
         await connection.query(
-          `ALTER TABLE content_blocks MODIFY block_type VARCHAR(50) NOT NULL DEFAULT 'PARAGRAPH'`
+          `ALTER TABLE content_blocks MODIFY block_type VARCHAR(50) NOT NULL DEFAULT 'PARAGRAPH'`,
         );
       } catch (_) {}
     }
@@ -279,109 +133,135 @@ async function ensureCoreSchemaCompatibility(connection) {
     if (hasLegacyType) {
       await connection.query(
         `UPDATE content_blocks
-         SET block_type = UPPER(COALESCE(NULLIF(block_type, ''), type, 'PARAGRAPH'))`
+         SET block_type = UPPER(COALESCE(NULLIF(block_type, ''), type, 'PARAGRAPH'))`,
       );
     }
   }
 
-  if (await tableExists(connection, 'learning_groups') &&
-      !(await columnExists(connection, 'learning_groups', 'expired_at'))) {
+  if (
+    (await tableExists(connection, "learning_groups")) &&
+    !(await columnExists(connection, "learning_groups", "expired_at"))
+  ) {
     await connection.query(
       `ALTER TABLE learning_groups
-       ADD COLUMN expired_at DATETIME NULL AFTER description`
+       ADD COLUMN expired_at DATETIME NULL AFTER description`,
     );
   }
 
-  if (await tableExists(connection, 'roles')) {
+  if (await tableExists(connection, "roles")) {
     await connection.query(
       `UPDATE roles
        SET name = CASE
          WHEN UPPER(name) = 'ADMIN' THEN 'ROLE_ADMIN'
          WHEN UPPER(name) = 'USER' THEN 'ROLE_USER'
          ELSE name
-       END`
+       END`,
     );
   }
 
-  if (await tableExists(connection, 'users')) {
-    if (await columnExists(connection, 'users', 'plan')) {
+  if (await tableExists(connection, "users")) {
+    if (await columnExists(connection, "users", "plan")) {
       await connection.query(
         `UPDATE users
          SET plan = CASE
            WHEN UPPER(plan) = 'GROUPPRO' THEN 'GROUP'
            ELSE UPPER(COALESCE(plan, 'FREE'))
-         END`
+         END`,
       );
     }
-    if (!(await columnExists(connection, 'users', 'streak_days'))) {
-      await connection.query('ALTER TABLE users ADD COLUMN streak_days INT DEFAULT 0');
+    if (!(await columnExists(connection, "users", "streak_days"))) {
+      await connection.query(
+        "ALTER TABLE users ADD COLUMN streak_days INT DEFAULT 0",
+      );
     } else {
-      await connection.query('ALTER TABLE users MODIFY streak_days INT DEFAULT 0');
+      await connection.query(
+        "ALTER TABLE users MODIFY streak_days INT DEFAULT 0",
+      );
     }
-    if (!(await columnExists(connection, 'users', 'completed_steps_count'))) {
-      await connection.query('ALTER TABLE users ADD COLUMN completed_steps_count INT DEFAULT 0');
+    if (!(await columnExists(connection, "users", "completed_steps_count"))) {
+      await connection.query(
+        "ALTER TABLE users ADD COLUMN completed_steps_count INT DEFAULT 0",
+      );
     } else {
-      await connection.query('ALTER TABLE users MODIFY completed_steps_count INT DEFAULT 0');
+      await connection.query(
+        "ALTER TABLE users MODIFY completed_steps_count INT DEFAULT 0",
+      );
     }
   }
 
-  if (await tableExists(connection, 'categories')) {
+  if (await tableExists(connection, "categories")) {
     try {
-      await connection.query('ALTER TABLE categories ADD CONSTRAINT unique_category_title UNIQUE (title)');
+      await connection.query(
+        "ALTER TABLE categories ADD CONSTRAINT unique_category_title UNIQUE (title)",
+      );
     } catch (_) {}
   }
 
-  if (await tableExists(connection, 'tags')) {
+  if (await tableExists(connection, "tags")) {
     try {
-      await connection.query('ALTER TABLE tags ADD CONSTRAINT unique_tag_title UNIQUE (title)');
+      await connection.query(
+        "ALTER TABLE tags ADD CONSTRAINT unique_tag_title UNIQUE (title)",
+      );
     } catch (_) {}
   }
 
-  if (await tableExists(connection, 'topics')) {
+  if (await tableExists(connection, "topics")) {
     try {
-      await connection.query('ALTER TABLE topics ADD CONSTRAINT unique_topic_title UNIQUE (title)');
+      await connection.query(
+        "ALTER TABLE topics ADD CONSTRAINT unique_topic_title UNIQUE (title)",
+      );
     } catch (_) {}
   }
 
   const longtextColumns = [
-    { table: 'content_blocks', col: 'body' },
-    { table: 'content_blocks', col: 'items_json' },
-    { table: 'content_blocks', col: 'media_url' },
-    { table: 'content_blocks', col: 'caption' },
-    { table: 'content_blocks', col: 'title' },
-    { table: 'steps', col: 'summary' },
-    { table: 'steps', col: 'note' },
-    { table: 'steps', col: 'theory' },
-    { table: 'steps', col: 'code_snippet' },
-    { table: 'steps', col: 'checklist_json' },
-    { table: 'lessons', col: 'summary' },
-    { table: 'topics', col: 'description' },
-    { table: 'categories', col: 'description' },
-    { table: 'tags', col: 'description' },
-    { table: 'quiz_questions', col: 'prompt' },
-    { table: 'quiz_questions', col: 'options_json' },
-    { table: 'user_step_progress', col: 'completed_checklist_json' },
+    { table: "content_blocks", col: "body" },
+    { table: "content_blocks", col: "items_json" },
+    { table: "content_blocks", col: "media_url" },
+    { table: "content_blocks", col: "caption" },
+    { table: "content_blocks", col: "title" },
+    { table: "steps", col: "summary" },
+    { table: "steps", col: "note" },
+    { table: "steps", col: "theory" },
+    { table: "steps", col: "code_snippet" },
+    { table: "steps", col: "checklist_json" },
+    { table: "lessons", col: "summary" },
+    { table: "topics", col: "description" },
+    { table: "categories", col: "description" },
+    { table: "tags", col: "description" },
+    { table: "quiz_questions", col: "prompt" },
+    { table: "quiz_questions", col: "options_json" },
+    { table: "user_step_progress", col: "completed_checklist_json" },
   ];
 
   for (const item of longtextColumns) {
-    if (await tableExists(connection, item.table) && await columnExists(connection, item.table, item.col)) {
+    if (
+      (await tableExists(connection, item.table)) &&
+      (await columnExists(connection, item.table, item.col))
+    ) {
       try {
-        await connection.query(`ALTER TABLE ${item.table} MODIFY ${item.col} LONGTEXT NULL`);
+        await connection.query(
+          `ALTER TABLE ${item.table} MODIFY ${item.col} LONGTEXT NULL`,
+        );
       } catch (_) {}
     }
   }
 
-  for (const tableName of ['topics', 'lessons', 'steps']) {
-    if (await tableExists(connection, tableName) && await columnExists(connection, tableName, 'access_level')) {
+  for (const tableName of ["topics", "lessons", "steps"]) {
+    if (
+      (await tableExists(connection, tableName)) &&
+      (await columnExists(connection, tableName, "access_level"))
+    ) {
       await connection.query(
         `UPDATE ${tableName}
-         SET access_level = UPPER(COALESCE(access_level, 'FREE'))`
+         SET access_level = UPPER(COALESCE(access_level, 'FREE'))`,
       );
     }
   }
 
-  if (await tableExists(connection, 'user_step_progress') &&
-      await columnExists(connection, 'user_step_progress', 'progress_status')) {
+  if (
+    (await tableExists(connection, "user_step_progress")) &&
+    (await columnExists(connection, "user_step_progress", "progress_status"))
+  ) {
     await connection.query(
       `UPDATE user_step_progress
        SET progress_status = CASE
@@ -390,7 +270,7 @@ async function ensureCoreSchemaCompatibility(connection) {
          WHEN LOWER(progress_status) = 'not_started' THEN 'NOT_STARTED'
          WHEN LOWER(progress_status) = 'locked' THEN 'NOT_STARTED'
          ELSE UPPER(COALESCE(progress_status, 'NOT_STARTED'))
-       END`
+       END`,
     );
   }
 }
@@ -403,7 +283,7 @@ async function syncCompletedStepCounts(connection) {
        FROM user_step_progress usp
        WHERE usp.user_id = u.id
          AND LOWER(usp.progress_status) = 'completed'
-     )`
+     )`,
   );
 }
 
@@ -616,50 +496,22 @@ async function initDatabaseSchema() {
       try {
         await connection.query(query);
       } catch (e) {
-        console.warn('Notice creating table:', e.message);
+        console.warn("Notice creating table:", e.message);
       }
     }
 
     await ensureCoreSchemaCompatibility(connection);
     await ensureUserStepProgressSchema(connection);
-    await ensureSpringSeedContent(connection);
 
-    // Seed roles
-    await connection.query(
-      `INSERT INTO roles (id, name, description, status)
-       VALUES (1, 'ROLE_ADMIN', 'System Administrator', 1), (2, 'ROLE_USER', 'Standard Learning Student', 1)
-       ON DUPLICATE KEY UPDATE name = VALUES(name), description = VALUES(description), status = VALUES(status)`
-    );
-
-    // Seed built-in admin/user accounts (can be disabled once real accounts
-    // exist — set ENABLE_DEMO_ACCOUNTS=false). Password is configurable via
-    // ADMIN_SEED_PASSWORD so production never ships with a well-known secret.
-    if (config.seed.enableDemoAccounts) {
-      const passwordHash = await bcrypt.hash(config.seed.adminPassword, 10);
-      await connection.query(
-        `INSERT INTO users (id, email, user_name, password, full_name, role_id, plan, active, status, streak_days, completed_steps_count) VALUES (1, 'admin@email.com', 'admin', ?, 'System Administrator', 1, 'GROUP', 1, 1, 0, 0)
-         ON DUPLICATE KEY UPDATE password = ?, role_id = 1`,
-        [passwordHash, passwordHash]
-      );
-
-      await connection.query(
-        `INSERT INTO users (id, email, user_name, password, full_name, role_id, plan, active, status, streak_days, completed_steps_count) VALUES (2, 'user@email.com', 'user', ?, 'Học Viên Thử Nghiệm', 2, 'GROUP', 1, 1, 0, 0)
-         ON DUPLICATE KEY UPDATE password = ?, role_id = 2`,
-        [passwordHash, passwordHash]
-      );
-    }
+    // NOTE: Auto-seed data (demo accounts, content, Canva topics) has been
+    // intentionally removed. Use cleanup_db.js or admin tools to seed data
+    // manually when needed. This avoids unwanted data insertion in production.
 
     await syncCompletedStepCounts(connection);
-
     connection.release();
-    console.log('✅ [SeedService] Database schema verified and seed data initialized successfully!');
-
-    if (config.seed.enableCanva) {
-      const { seedCanvaBasicTopic } = require('./canvaSeedService');
-      await seedCanvaBasicTopic();
-    }
+    console.log("[SeedService] Database schema verified and ready.");
   } catch (err) {
-    console.error('❌ [SeedService] Error initializing database schema:', err);
+    console.error("[SeedService] Error initializing database schema:", err);
   }
 }
 
