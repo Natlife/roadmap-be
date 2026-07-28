@@ -3,17 +3,18 @@ const { successResponse } = require('../utils/baseResponse');
 const { asyncHandler } = require('../middleware/error');
 
 const createRequest = asyncHandler(async (req, res) => {
-  const userId = req.user?.id;
+  const userId = req.userId ?? req.user?.id ?? null;
   const { name, phone, content } = req.body;
   const result = await service.createRequest({ userId, name, phone, content });
   res.status(201).json(successResponse(result, 'Plan Request submitted successfully'));
 });
 
 const getMyRequests = asyncHandler(async (req, res) => {
-  const userId = req.user?.id;
+  const userId = req.userId ?? req.user?.id ?? null;
   const requests = await service.getMyRequests(userId);
   res.json(successResponse(requests, 'Fetched my plan requests'));
 });
+
 
 const getAllRequests = asyncHandler(async (req, res) => {
   const { page, limit, status, search } = req.query;

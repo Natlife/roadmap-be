@@ -1,16 +1,44 @@
 const pool = require('../config/db');
 
 async function createPlanRequest({ userId, name, phone, content }, db = pool) {
+  let resolvedUserId = userId || null;
+
+  if (!resolvedUserId && phone) {
+    const [userRows] = await db.query(
+      `SELECT id FROM users WHERE user_name = ? OR email = ? LIMIT 1`,
+      [phone.trim(), phone.trim()]
+    );
+    if (userRows[0]) {
+      resolvedUserId = userRows[0].id;
+    }
+  }
+
   const [result] = await db.query(
     `INSERT INTO plan_requests (user_id, name, phone, content, status, created_at, updated_at)
      VALUES (?, ?, ?, ?, 'PENDING', NOW(), NOW())`,
-    [userId || null, name, phone, content]
+    [resolvedUserId, name, phone, content]
   );
   return result.insertId;
 }
 
 async function findPlanRequestsByUser(userId, db = pool) {
   if (!userId) return [];
+
+  const [uRows] = await db.query(
+    `SELECT id, full_name, user_name, email FROM users WHERE id = ? LIMIT 1`,
+    [userId]
+  );
+  const user = uRows[0];
+  const userName = user?.full_name || user?.user_name || '';
+
+  // Auto-link any existing unlinked requests matching user_id or matching name/phone
+  await db.query(
+    `UPDATE plan_requests
+        SET user_id = ?
+      WHERE user_id IS NULL AND (name = ? AND name != '')`,
+    [userId, userName]
+  );
+
   const [rows] = await db.query(
     `SELECT id, user_id, name, phone, content, status, admin_note, created_at, updated_at
        FROM plan_requests
@@ -20,6 +48,7 @@ async function findPlanRequestsByUser(userId, db = pool) {
   );
   return rows;
 }
+
 
 async function findAllPlanRequests({ page = 1, limit = 20, status, search }, db = pool) {
   const offset = (page - 1) * limit;

@@ -43,6 +43,11 @@ router.get('/steps/:stepId', authMiddleware({ optional: true }), topicController
 router.put('/steps/:stepId/progress', authMiddleware(), topicController.updateStepProgress);
 router.post('/steps/:stepId/quiz', authMiddleware(), topicController.submitQuiz);
 
+/* -------------------------------------------------------- categories & tags */
+router.get('/categories', authMiddleware({ optional: true }), adminController.getAllCategories);
+router.get('/tags', authMiddleware({ optional: true }), adminController.getAllTags);
+
+
 const planRequestController = require('../controllers/planRequestController');
 
 /* ----------------------------------------------------------- plan requests */
