@@ -230,8 +230,62 @@ async function updateStepApproval(id, approvalStatus, rejectionReason = null, db
 }
 
 
+const fs = require('fs');
+const path = require('path');
+
+function cleanupPhysicalMediaFiles(mediaUrls = []) {
+  if (!Array.isArray(mediaUrls)) return;
+  const projectRoot = path.join(__dirname, '..', '..');
+
+  for (const url of mediaUrls) {
+    if (!url || typeof url !== 'string') continue;
+    let relativePath = url;
+    try {
+      if (url.startsWith('http://') || url.startsWith('https://')) {
+        relativePath = new URL(url).pathname;
+      }
+    } catch (_) {
+      // Ignore URL parse errors
+    }
+
+    if (relativePath.includes('/upload/')) {
+      const cleanPath = relativePath.substring(relativePath.indexOf('/upload/'));
+      const fullPath = path.join(projectRoot, cleanPath.replace(/\//g, path.sep));
+
+      if (fs.existsSync(fullPath)) {
+        try {
+          fs.unlinkSync(fullPath);
+        } catch (err) {
+          console.warn(`[Storage] Could not delete file ${fullPath}:`, err.message);
+        }
+      }
+    }
+  }
+}
+
+async function findMediaUrlsForSteps(stepIds, db = pool) {
+  if (!Array.isArray(stepIds) || stepIds.length === 0) return [];
+  const placeholders = stepIds.map(() => '?').join(',');
+  const [rows] = await db.query(
+    `SELECT media_url FROM content_blocks WHERE step_id IN (${placeholders}) AND media_url IS NOT NULL AND media_url != ''`,
+    stepIds
+  );
+  return rows.map((r) => r.media_url).filter(Boolean);
+}
+
 async function deleteStep(id, db = pool) {
+  const mediaUrls = await findMediaUrlsForSteps([id], db);
   await db.query('DELETE FROM steps WHERE id = ?', [id]);
+  cleanupPhysicalMediaFiles(mediaUrls);
+}
+
+async function deleteStepsBatch(ids, db = pool) {
+  if (!Array.isArray(ids) || ids.length === 0) return 0;
+  const mediaUrls = await findMediaUrlsForSteps(ids, db);
+  const placeholders = ids.map(() => '?').join(',');
+  const [result] = await db.query(`DELETE FROM steps WHERE id IN (${placeholders})`, ids);
+  cleanupPhysicalMediaFiles(mediaUrls);
+  return result?.affectedRows || 0;
 }
 
 async function replaceStepPrerequisites(stepId, prerequisiteStepIds, db = pool) {
@@ -298,6 +352,7 @@ module.exports = {
   findStepById,
   upsertStep,
   deleteStep,
+  deleteStepsBatch,
   updateStepApproval,
   replaceStepPrerequisites,
   replaceStepBlocks,

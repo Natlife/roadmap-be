@@ -84,16 +84,37 @@ async function parsePdfSlides(pdfBuffer) {
       const textLines = [];
       let currentLine = '';
       let lastY = null;
+      let lastXEnd = null;
 
       for (const item of content.items) {
-        if (!item.str) continue;
+        if (!item.str && item.str !== ' ') continue;
+        const x = item.transform ? item.transform[4] : null;
         const y = item.transform ? item.transform[5] : null;
+        const width = item.width || 0;
+
         if (lastY !== null && Math.abs(y - lastY) > 5) {
           if (currentLine.trim()) textLines.push(currentLine.trim());
           currentLine = '';
+          lastXEnd = null;
         }
-        currentLine += (currentLine ? ' ' : '') + item.str;
+
+        // Insert space only when spatial distance between text items on the same line exceeds 4px (prevents word fragmentation on Vietnamese PDF fonts)
+        let needSpace = false;
+        if (
+          currentLine.length > 0 &&
+          !currentLine.endsWith(' ') &&
+          !item.str.startsWith(' ')
+        ) {
+          if (lastXEnd !== null && x !== null && x - lastXEnd > 4) {
+            needSpace = true;
+          }
+        }
+
+        currentLine += (needSpace ? ' ' : '') + item.str;
         lastY = y;
+        if (x !== null) {
+          lastXEnd = x + width;
+        }
       }
       if (currentLine.trim()) textLines.push(currentLine.trim());
 

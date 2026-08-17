@@ -75,6 +75,7 @@ author.put('/lessons/:id', adminController.updateLesson);
 author.delete('/lessons/:id', adminController.deleteLesson);
 
 author.post('/steps', adminController.createStep);
+author.post('/steps/batch-delete', adminController.deleteStepsBatch);
 author.put('/steps/:id', adminController.updateStep);
 author.delete('/steps/:id', adminController.deleteStep);
 author.put('/steps/:stepId/blocks', adminController.updateStepBlocks);
@@ -114,6 +115,7 @@ admin.put('/lessons/:id', adminController.updateLesson);
 admin.delete('/lessons/:id', adminController.deleteLesson);
 
 admin.post('/steps', adminController.createStep);
+admin.post('/steps/batch-delete', adminController.deleteStepsBatch);
 admin.put('/steps/:id', adminController.updateStep);
 admin.delete('/steps/:id', adminController.deleteStep);
 admin.put('/steps/:stepId/blocks', adminController.updateStepBlocks);

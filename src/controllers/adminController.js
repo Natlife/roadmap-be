@@ -68,6 +68,11 @@ const deleteStep = asyncHandler(async (req, res) => {
   await adminService.deleteStep(req.params.id, userCtx(req));
   res.json(successResponse(null, 'Step deleted successfully'));
 });
+const deleteStepsBatch = asyncHandler(async (req, res) => {
+  const ids = req.body.ids || req.body.stepIds || [];
+  const result = await adminService.deleteStepsBatch(ids, userCtx(req));
+  res.json(successResponse(result, `Deleted ${result.deletedCount} steps successfully`));
+});
 const updateStepBlocks = asyncHandler(async (req, res) => {
   await adminService.updateStepBlocks(req.params.stepId, req.body);
   res.json(successResponse(null, 'Step blocks updated successfully'));
@@ -191,7 +196,7 @@ module.exports = {
   getAllTags, createTag, updateTag, deleteTag,
   createTopic, updateTopic: createTopic, deleteTopic,
   createLesson, updateLesson: createLesson, deleteLesson,
-  createStep, updateStep: createStep, deleteStep, updateStepBlocks, updateStepQuizzes,
+  createStep, updateStep: createStep, deleteStep, deleteStepsBatch, updateStepBlocks, updateStepQuizzes,
   getAllGroups, getGroupDetail, createGroup, updateGroup: createGroup, deleteGroup,
   addMemberToGroup, removeMemberFromGroup,
   syncFullAdminData,

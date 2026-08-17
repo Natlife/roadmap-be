@@ -184,6 +184,31 @@ async function deleteStep(id, currentUser = {}) {
   await contentRepo.deleteStep(id);
 }
 
+async function deleteStepsBatch(ids, currentUser = {}) {
+  const list = Array.isArray(ids) ? ids.filter(Boolean) : [];
+  if (list.length === 0) return { deletedCount: 0 };
+
+  const { userId, userRole } = currentUser;
+
+  return pool.withTransaction(async (conn) => {
+    let validIds = list;
+    if (userRole === 'AUTHOR') {
+      const allowedIds = [];
+      for (const stepId of list) {
+        const existing = await contentRepo.findStepById(stepId);
+        if (!existing || !existing.author_id || String(existing.author_id) === String(userId)) {
+          allowedIds.push(stepId);
+        }
+      }
+      validIds = allowedIds;
+    }
+
+    if (validIds.length === 0) return { deletedCount: 0 };
+    const deletedCount = await contentRepo.deleteStepsBatch(validIds, conn);
+    return { deletedCount };
+  });
+}
+
 
 // Block types whose `body` holds rich HTML and must be sanitized before storing.
 const RICH_BLOCK_TYPES = new Set(['RICHTEXT', 'PARAGRAPH', 'CALLOUT', 'QUOTE', 'HEADING']);
@@ -384,6 +409,7 @@ module.exports = {
   deleteLesson,
   saveStep,
   deleteStep,
+  deleteStepsBatch,
   updateStepBlocks,
   updateStepQuizzes,
   listGroups,
