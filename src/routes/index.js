@@ -43,9 +43,17 @@ router.get('/steps/:stepId', authMiddleware({ optional: true }), topicController
 router.put('/steps/:stepId/progress', authMiddleware(), topicController.updateStepProgress);
 router.post('/steps/:stepId/quiz', authMiddleware(), topicController.submitQuiz);
 
+const exploreController = require('../controllers/exploreController');
+
+/* ----------------------------------------------------------------- explore */
+router.get('/explore/search', authMiddleware({ optional: true }), exploreController.searchExplore);
+router.get('/explore/authors/:identifier', authMiddleware({ optional: true }), exploreController.getAuthorProfile);
+router.get('/authors/:identifier', authMiddleware({ optional: true }), exploreController.getAuthorProfile);
+
 /* -------------------------------------------------------- categories & tags */
 router.get('/categories', authMiddleware({ optional: true }), adminController.getAllCategories);
 router.get('/tags', authMiddleware({ optional: true }), adminController.getAllTags);
+
 
 
 const planRequestController = require('../controllers/planRequestController');
@@ -54,9 +62,35 @@ const planRequestController = require('../controllers/planRequestController');
 router.post('/plan-requests', authMiddleware({ optional: true }), planRequestController.createRequest);
 router.get('/plan-requests/my', authMiddleware(), planRequestController.getMyRequests);
 
+/* ----------------------------------------------------------- author / admin content */
+const author = express.Router();
+author.use(authMiddleware({ roles: ['ADMIN', 'AUTHOR'] }));
+
+author.post('/topics', adminController.createTopic);
+author.put('/topics/:id', adminController.updateTopic);
+author.delete('/topics/:id', adminController.deleteTopic);
+
+author.post('/lessons', adminController.createLesson);
+author.put('/lessons/:id', adminController.updateLesson);
+author.delete('/lessons/:id', adminController.deleteLesson);
+
+author.post('/steps', adminController.createStep);
+author.put('/steps/:id', adminController.updateStep);
+author.delete('/steps/:id', adminController.deleteStep);
+author.put('/steps/:stepId/blocks', adminController.updateStepBlocks);
+author.put('/steps/:stepId/quizzes', adminController.updateStepQuizzes);
+
+router.use('/author', author);
+
 /* ------------------------------------------------------------------- admin */
 const admin = express.Router();
 admin.use(authMiddleware({ role: 'ADMIN' }));
+
+admin.get('/approvals', adminController.getPendingApprovals);
+admin.post('/approvals/topics/:id/approve', adminController.approveTopic);
+admin.post('/approvals/topics/:id/reject', adminController.rejectTopic);
+admin.post('/approvals/steps/:id/approve', adminController.approveStep);
+admin.post('/approvals/steps/:id/reject', adminController.rejectStep);
 
 admin.get('/plan-requests', planRequestController.getAllRequests);
 admin.patch('/plan-requests/:id', planRequestController.updateStatus);
@@ -101,12 +135,11 @@ admin.post('/slides/parse-pdf', uploadRam.single('file'), adminController.parseP
 admin.post('/upload/images', uploadRam.array('files', 100), adminController.uploadImages);
 admin.post('/sync', adminController.syncFullAdminData);
 
-
-
 // admin user management (create). read/update/delete live under /users below.
 admin.post('/users', userController.createUser);
 
 router.use('/admin', admin);
+
 
 /* -------------------------------------------------------------------- users */
 router.get('/users', authMiddleware({ role: 'ADMIN' }), userController.getAllUsers);

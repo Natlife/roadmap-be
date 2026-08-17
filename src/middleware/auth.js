@@ -4,6 +4,7 @@ const { ApiError } = require('./error');
 function normalizeRoleName(roleName) {
   const normalized = String(roleName || 'USER').toUpperCase();
   if (normalized === 'ROLE_ADMIN' || normalized === 'ADMIN') return 'ADMIN';
+  if (normalized === 'ROLE_AUTHOR' || normalized === 'AUTHOR') return 'AUTHOR';
   if (normalized === 'ROLE_USER' || normalized === 'USER') return 'USER';
   return normalized.replace(/^ROLE_/, '');
 }
@@ -11,9 +12,10 @@ function normalizeRoleName(roleName) {
 /**
  * Authentication / authorization middleware factory.
  *
- *   authMiddleware()                      -> requires a valid token
- *   authMiddleware({ optional: true })    -> attaches user if a token is present
- *   authMiddleware({ role: 'ADMIN' })     -> requires ADMIN (or any admin)
+ *   authMiddleware()                              -> requires a valid token
+ *   authMiddleware({ optional: true })            -> attaches user if a token is present
+ *   authMiddleware({ role: 'ADMIN' })             -> requires ADMIN (or any admin)
+ *   authMiddleware({ roles: ['ADMIN', 'AUTHOR'] }) -> requires ADMIN or AUTHOR
  */
 function authMiddleware(options = {}) {
   return (req, _res, next) => {
@@ -43,7 +45,12 @@ function authMiddleware(options = {}) {
     req.userId = decoded.userId ?? decoded.id ?? decoded.sub ?? null;
     req.userRole = normalizeRoleName(decoded.role || decoded.roleName);
 
-    if (options.role) {
+    if (options.roles && Array.isArray(options.roles)) {
+      const allowedRoles = options.roles.map(normalizeRoleName);
+      if (!allowedRoles.includes(req.userRole) && req.userRole !== 'ADMIN') {
+        return next(ApiError.forbidden('Forbidden: insufficient permissions'));
+      }
+    } else if (options.role) {
       const requiredRole = normalizeRoleName(options.role);
       if (req.userRole !== requiredRole && req.userRole !== 'ADMIN') {
         return next(ApiError.forbidden('Forbidden: insufficient permissions'));
@@ -55,3 +62,4 @@ function authMiddleware(options = {}) {
 }
 
 module.exports = { authMiddleware, normalizeRoleName };
+

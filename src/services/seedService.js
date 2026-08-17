@@ -287,6 +287,57 @@ async function syncCompletedStepCounts(connection) {
   );
 }
 
+async function ensureCodeColumns(connection) {
+  if (await tableExists(connection, "users")) {
+    if (!(await columnExists(connection, "users", "code"))) {
+      await connection.query("ALTER TABLE users ADD COLUMN code VARCHAR(50) NULL AFTER id");
+      try {
+        await connection.query("ALTER TABLE users ADD UNIQUE KEY uk_users_code (code)");
+      } catch (_) {}
+    }
+    const [usersWithoutCode] = await connection.query("SELECT id FROM users WHERE code IS NULL OR code = ''");
+    for (const u of usersWithoutCode) {
+      const code = `USR-${String(u.id).padStart(5, '0')}`;
+      await connection.query("UPDATE users SET code = ? WHERE id = ?", [code, u.id]);
+    }
+  }
+
+  if (await tableExists(connection, "lessons")) {
+    if (!(await columnExists(connection, "lessons", "code"))) {
+      await connection.query("ALTER TABLE lessons ADD COLUMN code VARCHAR(50) NULL AFTER id");
+      try {
+        await connection.query("ALTER TABLE lessons ADD UNIQUE KEY uk_lessons_code (code)");
+      } catch (_) {}
+    }
+    const [lessonsWithoutCode] = await connection.query("SELECT id FROM lessons WHERE code IS NULL OR code = ''");
+    for (const l of lessonsWithoutCode) {
+      const code = `BLOG-${String(l.id).padStart(5, '0')}`;
+      await connection.query("UPDATE lessons SET code = ? WHERE id = ?", [code, l.id]);
+    }
+  }
+}
+
+async function ensureProductionIndexes(connection) {
+  const indexConfigs = [
+    { table: 'lessons', index: 'idx_lessons_topic_id', sql: 'ALTER TABLE lessons ADD INDEX idx_lessons_topic_id (topic_id)' },
+    { table: 'steps', index: 'idx_steps_lesson_id', sql: 'ALTER TABLE steps ADD INDEX idx_steps_lesson_id (lesson_id)' },
+    { table: 'content_blocks', index: 'idx_blocks_step_id', sql: 'ALTER TABLE content_blocks ADD INDEX idx_blocks_step_id (step_id)' },
+    { table: 'quiz_questions', index: 'idx_quizzes_step_id', sql: 'ALTER TABLE quiz_questions ADD INDEX idx_quizzes_step_id (step_id)' },
+    { table: 'user_step_progress', index: 'idx_usp_user_id', sql: 'ALTER TABLE user_step_progress ADD INDEX idx_usp_user_id (user_id)' },
+    { table: 'plan_requests', index: 'idx_plan_requests_status', sql: 'ALTER TABLE plan_requests ADD INDEX idx_plan_requests_status (status)' },
+  ];
+
+  for (const cfg of indexConfigs) {
+    if (await tableExists(connection, cfg.table)) {
+      if (!(await indexExists(connection, cfg.table, cfg.index))) {
+        try {
+          await connection.query(cfg.sql);
+        } catch (_) {}
+      }
+    }
+  }
+}
+
 async function initDatabaseSchema() {
   try {
     const connection = await pool.getConnection();
@@ -305,6 +356,7 @@ async function initDatabaseSchema() {
       // 2. Users
       `CREATE TABLE IF NOT EXISTS users (
         id INT AUTO_INCREMENT PRIMARY KEY,
+        code VARCHAR(50) NULL UNIQUE,
         email VARCHAR(100) NOT NULL UNIQUE,
         user_name VARCHAR(100) NOT NULL UNIQUE,
         password VARCHAR(255) NOT NULL,
@@ -370,6 +422,7 @@ async function initDatabaseSchema() {
       // 8. Lessons
       `CREATE TABLE IF NOT EXISTS lessons (
         id INT AUTO_INCREMENT PRIMARY KEY,
+        code VARCHAR(50) NULL UNIQUE,
         topic_id INT NOT NULL,
         title VARCHAR(150) NOT NULL,
         summary TEXT,
@@ -502,6 +555,8 @@ async function initDatabaseSchema() {
 
     await ensureCoreSchemaCompatibility(connection);
     await ensureUserStepProgressSchema(connection);
+    await ensureCodeColumns(connection);
+    await ensureProductionIndexes(connection);
 
     // NOTE: Auto-seed data (demo accounts, content, Canva topics) has been
     // intentionally removed. Use cleanup_db.js or admin tools to seed data

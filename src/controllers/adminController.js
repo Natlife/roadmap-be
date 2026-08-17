@@ -38,30 +38,34 @@ const deleteTag = asyncHandler(async (req, res) => {
   res.json(successResponse(null, 'Tag deleted successfully'));
 });
 
+function userCtx(req) {
+  return { userId: req.userId, userRole: req.userRole };
+}
+
 /* ------------------------------------------------------------------- topics */
 const createTopic = asyncHandler(async (req, res) =>
-  res.json(successResponse(await adminService.saveTopic(withId(req)), 'Topic saved successfully'))
+  res.json(successResponse(await adminService.saveTopic(withId(req), userCtx(req)), 'Topic saved successfully'))
 );
 const deleteTopic = asyncHandler(async (req, res) => {
-  await adminService.deleteTopic(req.params.id);
+  await adminService.deleteTopic(req.params.id, userCtx(req));
   res.json(successResponse(null, 'Topic deleted successfully'));
 });
 
 /* ------------------------------------------------------------------ lessons */
 const createLesson = asyncHandler(async (req, res) =>
-  res.json(successResponse(await adminService.saveLesson(withId(req)), 'Lesson saved successfully'))
+  res.json(successResponse(await adminService.saveLesson(withId(req), userCtx(req)), 'Lesson saved successfully'))
 );
 const deleteLesson = asyncHandler(async (req, res) => {
-  await adminService.deleteLesson(req.params.id);
+  await adminService.deleteLesson(req.params.id, userCtx(req));
   res.json(successResponse(null, 'Lesson deleted successfully'));
 });
 
 /* -------------------------------------------------------------------- steps */
 const createStep = asyncHandler(async (req, res) =>
-  res.json(successResponse(await adminService.saveStep(withId(req)), 'Step saved successfully'))
+  res.json(successResponse(await adminService.saveStep(withId(req), userCtx(req)), 'Step saved successfully'))
 );
 const deleteStep = asyncHandler(async (req, res) => {
-  await adminService.deleteStep(req.params.id);
+  await adminService.deleteStep(req.params.id, userCtx(req));
   res.json(successResponse(null, 'Step deleted successfully'));
 });
 const updateStepBlocks = asyncHandler(async (req, res) => {
@@ -72,6 +76,24 @@ const updateStepQuizzes = asyncHandler(async (req, res) => {
   await adminService.updateStepQuizzes(req.params.stepId, req.body);
   res.json(successResponse(null, 'Step quiz questions updated successfully'));
 });
+
+/* --------------------------------------------------------------- approvals */
+const getPendingApprovals = asyncHandler(async (req, res) =>
+  res.json(successResponse(await adminService.getPendingApprovals(), 'Fetched pending approvals successfully'))
+);
+const approveTopic = asyncHandler(async (req, res) =>
+  res.json(successResponse(await adminService.approveTopic(req.params.id), 'Topic approved successfully'))
+);
+const rejectTopic = asyncHandler(async (req, res) =>
+  res.json(successResponse(await adminService.rejectTopic(req.params.id, req.body.reason), 'Topic rejected successfully'))
+);
+const approveStep = asyncHandler(async (req, res) =>
+  res.json(successResponse(await adminService.approveStep(req.params.id), 'Step approved successfully'))
+);
+const rejectStep = asyncHandler(async (req, res) =>
+  res.json(successResponse(await adminService.rejectStep(req.params.id, req.body.reason), 'Step rejected successfully'))
+);
+
 
 /* ------------------------------------------------------------------- groups */
 const getAllGroups = asyncHandler(async (req, res) =>
@@ -176,7 +198,9 @@ module.exports = {
   parseGDriveFolder: parseGDriveFolderController,
   parsePdfSlides: parsePdfSlidesController,
   uploadImages: uploadImagesController,
+  getPendingApprovals,
+  approveTopic,
+  rejectTopic,
+  approveStep,
+  rejectStep,
 };
-
-
-

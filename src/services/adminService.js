@@ -67,52 +67,123 @@ const tags = taxonomyService('tags');
 
 /* ----------------------------------------------------------------- topics */
 
-async function saveTopic(body) {
+async function saveTopic(body, currentUser = {}) {
   if (!body.title || !String(body.title).trim()) throw ApiError.badRequest('Title is required');
+  const { userId, userRole } = currentUser;
+
+  const topicId = toId(body.id);
+  if (topicId != null) {
+    const existing = await contentRepo.findTopicById(topicId);
+    if (existing && userRole === 'AUTHOR' && existing.author_id && String(existing.author_id) !== String(userId)) {
+      throw ApiError.forbidden('Forbidden: You can only edit your own blogs');
+    }
+  }
+
+  const topicPayload = {
+    ...body,
+    authorId: body.authorId ?? (topicId == null ? userId : undefined),
+    approvalStatus: userRole === 'AUTHOR' ? 'PENDING' : (body.approvalStatus || 'APPROVED'),
+    rejectionReason: userRole === 'AUTHOR' ? null : body.rejectionReason,
+  };
+
   return pool.withTransaction(async (conn) => {
-    const topicId = await contentRepo.upsertTopic(body, conn);
-    await contentRepo.replaceTopicRelations(topicId, body.categoryIds, body.tagIds, body.allowedGroupIds, conn);
-    return { id: topicId, title: body.title, categoryIds: body.categoryIds, tagIds: body.tagIds, allowedGroupIds: body.allowedGroupIds };
+    const savedId = await contentRepo.upsertTopic(topicPayload, conn);
+    await contentRepo.replaceTopicRelations(savedId, body.categoryIds, body.tagIds, body.allowedGroupIds, conn);
+    return { id: savedId, title: body.title, categoryIds: body.categoryIds, tagIds: body.tagIds, allowedGroupIds: body.allowedGroupIds };
   });
 }
 
-async function deleteTopic(id) {
+async function deleteTopic(id, currentUser = {}) {
+  const { userId, userRole } = currentUser;
+  if (userRole === 'AUTHOR') {
+    const existing = await contentRepo.findTopicById(id);
+    if (existing && existing.author_id && String(existing.author_id) !== String(userId)) {
+      throw ApiError.forbidden('Forbidden: You can only delete your own blogs');
+    }
+  }
   await contentRepo.deleteTopic(id);
 }
 
 /* ---------------------------------------------------------------- lessons */
 
-async function saveLesson(body) {
+async function saveLesson(body, currentUser = {}) {
   if (toId(body.topicId) == null) throw ApiError.badRequest('A valid topicId is required');
-  const lessonId = await contentRepo.upsertLesson(body);
-  return { id: lessonId, topicId: body.topicId, title: body.title };
+  const { userId, userRole } = currentUser;
+
+  const lessonId = toId(body.id);
+  if (lessonId != null) {
+    const existing = await contentRepo.findLessonById(lessonId);
+    if (existing && userRole === 'AUTHOR' && existing.author_id && String(existing.author_id) !== String(userId)) {
+      throw ApiError.forbidden('Forbidden: You can only edit your own lessons');
+    }
+  }
+
+  const lessonPayload = {
+    ...body,
+    authorId: body.authorId ?? (lessonId == null ? userId : undefined),
+  };
+
+  const savedId = await contentRepo.upsertLesson(lessonPayload);
+  return { id: savedId, topicId: body.topicId, title: body.title };
 }
 
-async function deleteLesson(id) {
+async function deleteLesson(id, currentUser = {}) {
+  const { userId, userRole } = currentUser;
+  if (userRole === 'AUTHOR') {
+    const existing = await contentRepo.findLessonById(id);
+    if (existing && existing.author_id && String(existing.author_id) !== String(userId)) {
+      throw ApiError.forbidden('Forbidden: You can only delete your own lessons');
+    }
+  }
   await contentRepo.deleteLesson(id);
 }
 
 /* ------------------------------------------------------------------ steps */
 
-async function saveStep(body) {
+async function saveStep(body, currentUser = {}) {
   let lessonId = toId(body.lessonId);
   const stepId = toId(body.id);
+  const { userId, userRole } = currentUser;
+
   if (lessonId == null && stepId != null) {
     const existing = await readRepo.findStepById(stepId);
     if (existing) lessonId = toId(existing.lesson_id);
   }
   if (lessonId == null) throw ApiError.badRequest('A valid lessonId is required');
   body.lessonId = lessonId;
+
+  if (stepId != null) {
+    const existing = await contentRepo.findStepById(stepId);
+    if (existing && userRole === 'AUTHOR' && existing.author_id && String(existing.author_id) !== String(userId)) {
+      throw ApiError.forbidden('Forbidden: You can only edit your own steps');
+    }
+  }
+
+  const stepPayload = {
+    ...body,
+    authorId: body.authorId ?? (stepId == null ? userId : undefined),
+    approvalStatus: userRole === 'AUTHOR' ? 'PENDING' : (body.approvalStatus || 'APPROVED'),
+    rejectionReason: userRole === 'AUTHOR' ? null : body.rejectionReason,
+  };
+
   return pool.withTransaction(async (conn) => {
-    const savedId = await contentRepo.upsertStep(body, conn);
+    const savedId = await contentRepo.upsertStep(stepPayload, conn);
     await contentRepo.replaceStepPrerequisites(savedId, body.prerequisiteStepIds, conn);
     return { id: savedId, lessonId: body.lessonId, title: body.title };
   });
 }
 
-async function deleteStep(id) {
+async function deleteStep(id, currentUser = {}) {
+  const { userId, userRole } = currentUser;
+  if (userRole === 'AUTHOR') {
+    const existing = await contentRepo.findStepById(id);
+    if (existing && existing.author_id && String(existing.author_id) !== String(userId)) {
+      throw ApiError.forbidden('Forbidden: You can only delete your own steps');
+    }
+  }
   await contentRepo.deleteStep(id);
 }
+
 
 // Block types whose `body` holds rich HTML and must be sanitized before storing.
 const RICH_BLOCK_TYPES = new Set(['RICHTEXT', 'PARAGRAPH', 'CALLOUT', 'QUOTE', 'HEADING']);
@@ -234,6 +305,76 @@ async function syncFullData({ categories: cats, tags: tagList, topics, groups })
   });
 }
 
+/* --------------------------------------------------------------- approvals */
+
+async function getPendingApprovals() {
+  const [topics, steps] = await Promise.all([
+    readRepo.findPendingTopics(),
+    readRepo.findPendingSteps(),
+  ]);
+
+  return {
+    topics: topics.map((t) => ({
+      id: String(t.id),
+      code: t.code || `BLOG-${String(t.id).padStart(5, '0')}`,
+      title: t.title,
+      description: t.description,
+      approvalStatus: t.approval_status,
+      author: t.author_id ? {
+        id: String(t.author_id),
+        username: t.author_username,
+        fullName: t.author_full_name,
+        email: t.author_email,
+      } : null,
+      createdAt: t.created_at,
+    })),
+    steps: steps.map((s) => ({
+      id: String(s.id),
+      code: s.code || `STEP-${String(s.id).padStart(5, '0')}`,
+      title: s.title,
+      summary: s.summary,
+      topicTitle: s.topic_title,
+      lessonTitle: s.lesson_title,
+      approvalStatus: s.approval_status,
+      author: s.author_id ? {
+        id: String(s.author_id),
+        username: s.author_username,
+        fullName: s.author_full_name,
+        email: s.author_email,
+      } : null,
+      createdAt: s.created_at,
+    })),
+  };
+}
+
+async function approveTopic(id) {
+  const existing = await contentRepo.findTopicById(id);
+  if (!existing) throw ApiError.notFound('Topic not found');
+  await contentRepo.updateTopicApproval(id, 'APPROVED', null);
+  return { id: String(id), approvalStatus: 'APPROVED' };
+}
+
+async function rejectTopic(id, reason = null) {
+  const existing = await contentRepo.findTopicById(id);
+  if (!existing) throw ApiError.notFound('Topic not found');
+  await contentRepo.updateTopicApproval(id, 'REJECTED', reason || 'Rejected by Admin');
+  return { id: String(id), approvalStatus: 'REJECTED', rejectionReason: reason };
+}
+
+async function approveStep(id) {
+  const existing = await contentRepo.findStepById(id);
+  if (!existing) throw ApiError.notFound('Step not found');
+  await contentRepo.updateStepApproval(id, 'APPROVED', null);
+  return { id: String(id), approvalStatus: 'APPROVED' };
+}
+
+async function rejectStep(id, reason = null) {
+  const existing = await contentRepo.findStepById(id);
+  if (!existing) throw ApiError.notFound('Step not found');
+  await contentRepo.updateStepApproval(id, 'REJECTED', reason || 'Rejected by Admin');
+  return { id: String(id), approvalStatus: 'REJECTED', rejectionReason: reason };
+}
+
 module.exports = {
   categories,
   tags,
@@ -252,4 +393,10 @@ module.exports = {
   addMember,
   removeMember,
   syncFullData,
+  getPendingApprovals,
+  approveTopic,
+  rejectTopic,
+  approveStep,
+  rejectStep,
 };
+

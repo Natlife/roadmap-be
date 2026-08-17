@@ -3,8 +3,16 @@ const { toId, toIdList, toUpperEnum } = require('../utils/parse');
 
 /* ------------------------------------------------------------------ topics */
 
+async function findTopicById(id, db = pool) {
+  const [rows] = await db.query('SELECT * FROM topics WHERE id = ? LIMIT 1', [id]);
+  return rows[0] || null;
+}
+
 async function upsertTopic(topic, db = pool) {
   const id = toId(topic.id);
+  const authorId = toId(topic.authorId);
+  const approvalStatus = String(topic.approvalStatus || 'APPROVED').toUpperCase();
+  const rejectionReason = topic.rejectionReason || null;
   const values = [
     topic.title,
     topic.description || '',
@@ -12,27 +20,38 @@ async function upsertTopic(topic, db = pool) {
     topic.levelLabel || 'Beginner',
     topic.estimatedHours || 4,
     toUpperEnum(topic.accessLevel, 'FREE'),
+    authorId,
+    approvalStatus,
+    rejectionReason,
   ];
 
   if (id != null) {
     await db.query(
-      `INSERT INTO topics (id, title, description, emoji, level_label, estimated_hours, access_level, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+      `INSERT INTO topics (id, title, description, emoji, level_label, estimated_hours, access_level, author_id, approval_status, rejection_reason, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
        ON DUPLICATE KEY UPDATE
          title = VALUES(title), description = VALUES(description), emoji = VALUES(emoji),
          level_label = VALUES(level_label), estimated_hours = VALUES(estimated_hours),
-         access_level = VALUES(access_level)`,
+         access_level = VALUES(access_level), author_id = COALESCE(VALUES(author_id), author_id),
+         approval_status = VALUES(approval_status), rejection_reason = VALUES(rejection_reason)`,
       [id, ...values]
     );
+
+    const generatedCode = topic.code || `BLOG-${String(id).padStart(5, '0')}`;
+    await db.query('UPDATE topics SET code = ? WHERE id = ? AND (code IS NULL OR code = "")', [generatedCode, id]);
     return id;
   }
 
   const [result] = await db.query(
-    `INSERT INTO topics (title, description, emoji, level_label, estimated_hours, access_level, status)
-     VALUES (?, ?, ?, ?, ?, ?, 1)`,
+    `INSERT INTO topics (title, description, emoji, level_label, estimated_hours, access_level, author_id, approval_status, rejection_reason, status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
     values
   );
-  return result.insertId;
+  const newId = result.insertId;
+
+  const generatedCode = topic.code || `BLOG-${String(newId).padStart(5, '0')}`;
+  await db.query('UPDATE topics SET code = ? WHERE id = ?', [generatedCode, newId]);
+  return newId;
 }
 
 async function replaceTopicRelations(topicId, categoryIds, tagIds, allowedGroupIds, db = pool) {
@@ -69,12 +88,28 @@ async function deleteTopic(id, db = pool) {
   await db.query('DELETE FROM topics WHERE id = ?', [id]);
 }
 
+async function updateTopicApproval(id, approvalStatus, rejectionReason = null, db = pool) {
+  await db.query(
+    'UPDATE topics SET approval_status = ?, rejection_reason = ? WHERE id = ?',
+    [approvalStatus, rejectionReason, id]
+  );
+}
+
 /* ----------------------------------------------------------------- lessons */
+
+async function findLessonById(id, db = pool) {
+  const [rows] = await db.query('SELECT * FROM lessons WHERE id = ? LIMIT 1', [id]);
+  return rows[0] || null;
+}
 
 async function upsertLesson(lesson, db = pool) {
   const id = toId(lesson.id);
+  const authorId = toId(lesson.authorId);
+  const code = lesson.code || null;
   const values = [
+    code,
     lesson.topicId,
+    authorId,
     lesson.title,
     lesson.summary || '',
     lesson.orderIndex || 0,
@@ -84,22 +119,35 @@ async function upsertLesson(lesson, db = pool) {
 
   if (id != null) {
     await db.query(
-      `INSERT INTO lessons (id, topic_id, title, summary, order_index, access_level, estimated_minutes, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+      `INSERT INTO lessons (id, code, topic_id, author_id, title, summary, order_index, access_level, estimated_minutes, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
        ON DUPLICATE KEY UPDATE
+         code = COALESCE(VALUES(code), code), author_id = COALESCE(VALUES(author_id), author_id),
          title = VALUES(title), summary = VALUES(summary), order_index = VALUES(order_index),
          access_level = VALUES(access_level), estimated_minutes = VALUES(estimated_minutes)`,
       [id, ...values]
     );
+
+    if (!code) {
+      const generatedCode = `LSN-${String(id).padStart(5, '0')}`;
+      await db.query('UPDATE lessons SET code = ? WHERE id = ? AND (code IS NULL OR code = "")', [generatedCode, id]);
+    }
     return id;
   }
 
   const [result] = await db.query(
-    `INSERT INTO lessons (topic_id, title, summary, order_index, access_level, estimated_minutes, status)
-     VALUES (?, ?, ?, ?, ?, ?, 1)`,
+    `INSERT INTO lessons (code, topic_id, author_id, title, summary, order_index, access_level, estimated_minutes, status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)`,
     values
   );
-  return result.insertId;
+  const newId = result.insertId;
+
+  if (!code) {
+    const generatedCode = `LSN-${String(newId).padStart(5, '0')}`;
+    await db.query('UPDATE lessons SET code = ? WHERE id = ?', [generatedCode, newId]);
+  }
+
+  return newId;
 }
 
 async function deleteLesson(id, db = pool) {
@@ -108,10 +156,20 @@ async function deleteLesson(id, db = pool) {
 
 /* ------------------------------------------------------------------- steps */
 
+async function findStepById(id, db = pool) {
+  const [rows] = await db.query('SELECT * FROM steps WHERE id = ? LIMIT 1', [id]);
+  return rows[0] || null;
+}
+
 async function upsertStep(step, db = pool) {
   const id = toId(step.id);
+  const authorId = toId(step.authorId);
+  const approvalStatus = String(step.approvalStatus || 'APPROVED').toUpperCase();
+  const rejectionReason = step.rejectionReason || null;
+
   const values = [
     step.lessonId,
+    authorId,
     step.title,
     step.summary || '',
     step.orderIndex || 0,
@@ -124,34 +182,53 @@ async function upsertStep(step, db = pool) {
     step.passThreshold || 80,
     step.estimatedMinutes || 10,
     step.xpReward || 20,
+    approvalStatus,
+    rejectionReason,
   ];
 
   if (id != null) {
     await db.query(
       `INSERT INTO steps
-         (id, lesson_id, title, summary, order_index, access_level, note, theory,
-          code_snippet, code_language, checklist_json, pass_threshold, estimated_minutes, xp_reward, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+         (id, lesson_id, author_id, title, summary, order_index, access_level, note, theory,
+          code_snippet, code_language, checklist_json, pass_threshold, estimated_minutes, xp_reward, approval_status, rejection_reason, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
        ON DUPLICATE KEY UPDATE
+         author_id = COALESCE(VALUES(author_id), author_id),
          title = VALUES(title), summary = VALUES(summary), order_index = VALUES(order_index),
          access_level = VALUES(access_level), note = VALUES(note), theory = VALUES(theory),
          code_snippet = VALUES(code_snippet), code_language = VALUES(code_language),
          checklist_json = VALUES(checklist_json), pass_threshold = VALUES(pass_threshold),
-         estimated_minutes = VALUES(estimated_minutes), xp_reward = VALUES(xp_reward)`,
+         estimated_minutes = VALUES(estimated_minutes), xp_reward = VALUES(xp_reward),
+         approval_status = VALUES(approval_status), rejection_reason = VALUES(rejection_reason)`,
       [id, ...values]
     );
+
+    const generatedCode = step.code || `STEP-${String(id).padStart(5, '0')}`;
+    await db.query('UPDATE steps SET code = ? WHERE id = ? AND (code IS NULL OR code = "")', [generatedCode, id]);
     return id;
   }
 
   const [result] = await db.query(
     `INSERT INTO steps
-       (lesson_id, title, summary, order_index, access_level, note, theory,
-        code_snippet, code_language, checklist_json, pass_threshold, estimated_minutes, xp_reward, status)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+       (lesson_id, author_id, title, summary, order_index, access_level, note, theory,
+        code_snippet, code_language, checklist_json, pass_threshold, estimated_minutes, xp_reward, approval_status, rejection_reason, status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
     values
   );
-  return result.insertId;
+  const newId = result.insertId;
+
+  const generatedCode = step.code || `STEP-${String(newId).padStart(5, '0')}`;
+  await db.query('UPDATE steps SET code = ? WHERE id = ?', [generatedCode, newId]);
+  return newId;
 }
+
+async function updateStepApproval(id, approvalStatus, rejectionReason = null, db = pool) {
+  await db.query(
+    'UPDATE steps SET approval_status = ?, rejection_reason = ? WHERE id = ?',
+    [approvalStatus, rejectionReason, id]
+  );
+}
+
 
 async function deleteStep(id, db = pool) {
   await db.query('DELETE FROM steps WHERE id = ?', [id]);
@@ -210,14 +287,20 @@ async function replaceStepQuizzes(stepId, quizzes, db = pool) {
 }
 
 module.exports = {
+  findTopicById,
   upsertTopic,
   replaceTopicRelations,
   deleteTopic,
+  updateTopicApproval,
+  findLessonById,
   upsertLesson,
   deleteLesson,
+  findStepById,
   upsertStep,
   deleteStep,
+  updateStepApproval,
   replaceStepPrerequisites,
   replaceStepBlocks,
   replaceStepQuizzes,
 };
+

@@ -4,15 +4,16 @@ const { successResponse } = require('../utils/baseResponse');
 const { asyncHandler, ApiError } = require('../middleware/error');
 
 const getAllTopics = asyncHandler(async (req, res) => {
-  const topics = await topicService.getTopicTree(null, req.userId ?? null);
+  const topics = await topicService.getTopicTree(null, req.userId ?? null, req.userRole ?? null);
   res.json(successResponse(topics, 'Fetched all topics successfully'));
 });
 
 const getTopicDetail = asyncHandler(async (req, res) => {
-  const topics = await topicService.getTopicTree(req.params.topicId, req.userId ?? null);
+  const topics = await topicService.getTopicTree(req.params.topicId, req.userId ?? null, req.userRole ?? null);
   if (topics.length === 0) throw ApiError.notFound('Topic not found');
   res.json(successResponse(topics[0], 'Fetched topic detail successfully'));
 });
+
 
 const getStepDetail = asyncHandler(async (req, res) => {
   const step = await topicService.getStepDetail(req.params.stepId, req.userId ?? null);

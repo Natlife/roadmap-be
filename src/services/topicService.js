@@ -21,9 +21,10 @@ function groupBy(rows, keyField) {
  * @param {number|string|null} topicId  restrict to a single topic, or null for all
  * @param {number|null} userId          merge this user's progress (null = anonymous)
  */
-async function getTopicTree(topicId = null, userId = null) {
-  const topicRows = await repo.findTopics(topicId);
+async function getTopicTree(topicId = null, userId = null, userRole = null) {
+  const topicRows = await repo.findTopics(topicId, { userId, userRole });
   if (topicRows.length === 0) return [];
+
 
   const topicIds = topicRows.map((t) => t.id);
   const [categoriesByTopic, tagsByTopic, lessonRows] = await Promise.all([

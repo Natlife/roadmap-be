@@ -11,14 +11,56 @@ function inClause(ids) {
   return ids.map(() => '?').join(', ');
 }
 
-async function findTopics(topicId = null, db = pool) {
+async function findTopics(topicId = null, options = {}, db = pool) {
+  const { userRole, userId } = options;
+  const conditions = [];
+  const params = [];
+
   if (topicId != null) {
-    const [rows] = await db.query(`SELECT * FROM topics WHERE id = ?`, [topicId]);
-    return rows;
+    conditions.push('id = ?');
+    params.push(topicId);
   }
-  const [rows] = await db.query(`SELECT * FROM topics ORDER BY created_at DESC, id DESC`);
+
+  // Approval status filter
+  if (userRole === 'ADMIN') {
+    // Admin sees all topics
+  } else if (userRole === 'AUTHOR' && userId) {
+    conditions.push('(approval_status = "APPROVED" OR author_id = ?)');
+    params.push(userId);
+  } else {
+    conditions.push('approval_status = "APPROVED"');
+  }
+
+  const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+  const [rows] = await db.query(`SELECT * FROM topics ${whereClause} ORDER BY created_at DESC, id DESC`, params);
   return rows;
 }
+
+async function findPendingTopics(db = pool) {
+  const [rows] = await db.query(
+    `SELECT t.*, u.user_name AS author_username, u.full_name AS author_full_name, u.email AS author_email
+       FROM topics t
+       LEFT JOIN users u ON t.author_id = u.id
+      WHERE t.approval_status = 'PENDING'
+      ORDER BY t.created_at DESC`
+  );
+  return rows;
+}
+
+async function findPendingSteps(db = pool) {
+  const [rows] = await db.query(
+    `SELECT s.*, l.title AS lesson_title, t.title AS topic_title,
+            u.user_name AS author_username, u.full_name AS author_full_name, u.email AS author_email
+       FROM steps s
+       LEFT JOIN lessons l ON s.lesson_id = l.id
+       LEFT JOIN topics t ON l.topic_id = t.id
+       LEFT JOIN users u ON s.author_id = u.id
+      WHERE s.approval_status = 'PENDING'
+      ORDER BY s.created_at DESC`
+  );
+  return rows;
+}
+
 
 async function findCategoriesForTopics(topicIds, db = pool) {
   if (topicIds.length === 0) return [];
@@ -140,6 +182,8 @@ async function findStepWithAccess(stepId, db = pool) {
 
 module.exports = {
   findTopics,
+  findPendingTopics,
+  findPendingSteps,
   findCategoriesForTopics,
   findTagsForTopics,
   findLessonsForTopics,
@@ -150,3 +194,4 @@ module.exports = {
   findStepById,
   findStepWithAccess,
 };
+

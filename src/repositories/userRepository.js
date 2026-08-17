@@ -1,12 +1,15 @@
 const pool = require('../config/db');
 
 const USER_SELECT = `
-  u.id, u.email, u.user_name AS username, u.full_name AS fullName, u.plan, u.active,
+  u.id, u.code, u.email, u.user_name AS username, u.full_name AS fullName, u.description, u.plan, u.active,
   u.streak_days AS streakDays, u.completed_steps_count AS completedStepsCount,
   u.role_id AS roleId, r.name AS role`;
 
+
 // Columns clients may sort by -> safe SQL expression (whitelist prevents injection).
 const SORTABLE = {
+  id: 'u.id',
+  code: 'u.code',
   fullName: 'u.full_name',
   email: 'u.email',
   username: 'u.user_name',
@@ -21,21 +24,24 @@ async function findByLoginIdentifier(identifier, db = pool) {
     `SELECT u.*, r.name AS role_name
        FROM users u
        LEFT JOIN roles r ON u.role_id = r.id
-      WHERE LOWER(u.email) = ? OR LOWER(u.user_name) = ?
+      WHERE LOWER(u.email) = ? OR LOWER(u.user_name) = ? OR LOWER(u.code) = ?
       LIMIT 1`,
-    [identifier, identifier]
+    [identifier, identifier, identifier]
   );
   return rows[0] || null;
 }
 
 async function findByIdWithRole(id, db = pool) {
+  const isNumeric = /^\d+$/.test(String(id));
+  const whereClause = isNumeric ? 'u.id = ? OR u.code = ?' : 'u.code = ?';
+  const params = isNumeric ? [id, id] : [id];
   const [rows] = await db.query(
     `SELECT ${USER_SELECT}
        FROM users u
        LEFT JOIN roles r ON u.role_id = r.id
-      WHERE u.id = ?
+      WHERE ${whereClause}
       LIMIT 1`,
-    [id]
+    params
   );
   return rows[0] || null;
 }
@@ -81,6 +87,7 @@ async function existsByUsername(username, excludeId = null, db = pool) {
 
 async function insertUser(
   {
+    code,
     email,
     userName,
     passwordHash,
@@ -94,9 +101,10 @@ async function insertUser(
   db = pool
 ) {
   const [result] = await db.query(
-    `INSERT INTO users (email, user_name, password, full_name, role_id, plan, active, status, streak_days, completed_steps_count)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+    `INSERT INTO users (code, email, user_name, password, full_name, role_id, plan, active, status, streak_days, completed_steps_count)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
     [
+      code || null,
       email,
       userName,
       passwordHash,
@@ -108,7 +116,14 @@ async function insertUser(
       completedStepsCount ?? 0,
     ]
   );
-  return result.insertId;
+  const newId = result.insertId;
+
+  if (!code) {
+    const generatedCode = `USR-${String(newId).padStart(5, '0')}`;
+    await db.query('UPDATE users SET code = ? WHERE id = ?', [generatedCode, newId]);
+  }
+
+  return newId;
 }
 
 // ---- list / count with optional filters ------------------------------------
@@ -116,9 +131,9 @@ function buildFilters({ search, roleId, plan, active }) {
   const where = [];
   const params = [];
   if (search) {
-    where.push('(u.email LIKE ? OR u.user_name LIKE ? OR u.full_name LIKE ?)');
+    where.push('(u.email LIKE ? OR u.user_name LIKE ? OR u.full_name LIKE ? OR u.code LIKE ? OR CAST(u.id AS CHAR) = ?)');
     const like = `%${search}%`;
-    params.push(like, like, like);
+    params.push(like, like, like, like, search);
   }
   if (roleId) {
     where.push('u.role_id = ?');
@@ -170,10 +185,11 @@ async function countActiveAdmins(excludeId = null, db = pool) {
 }
 
 // Dynamic partial update. Only the provided fields are written.
-async function updateUser(id, { fullName, plan, active, roleId, passwordHash }, db = pool) {
+async function updateUser(id, { fullName, description, plan, active, roleId, passwordHash }, db = pool) {
   const sets = [];
   const params = [];
   if (fullName !== undefined) { sets.push('full_name = ?'); params.push(fullName); }
+  if (description !== undefined) { sets.push('description = ?'); params.push(description); }
   if (plan !== undefined) { sets.push('plan = ?'); params.push(plan); }
   if (active !== undefined) { sets.push('active = ?'); params.push(active ? 1 : 0); }
   if (roleId !== undefined) { sets.push('role_id = ?'); params.push(roleId); }
@@ -184,8 +200,12 @@ async function updateUser(id, { fullName, plan, active, roleId, passwordHash }, 
 }
 
 async function deleteUser(id, db = pool) {
+  await db.query('DELETE FROM group_members WHERE user_id = ?', [id]);
+  await db.query('DELETE FROM user_step_progress WHERE user_id = ?', [id]);
+  await db.query('DELETE FROM plan_requests WHERE user_id = ?', [id]);
   await db.query('DELETE FROM users WHERE id = ?', [id]);
 }
+
 
 module.exports = {
   findByLoginIdentifier,

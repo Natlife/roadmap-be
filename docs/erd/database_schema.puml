@@ -1,0 +1,229 @@
+@startuml Database_Schema_HocMeo
+
+hide circle
+skinparam linetype ortho
+skinparam packageStyle rectangle
+skinparam shadowheading false
+
+entity "roles" as roles {
+  * id : INT <<PK>>
+  --
+  * name : VARCHAR(255) <<UNIQUE>> ' ROLE_ADMIN, ROLE_USER, ROLE_AUTHOR
+  description : VARCHAR(255)
+  status : INT
+  created_at : DATETIME
+  updated_at : DATETIME
+}
+
+entity "users" as users {
+  * id : INT <<PK>>
+  --
+  * code : VARCHAR(50) <<UNIQUE>> ' USR-00001
+  * user_name : VARCHAR(255) <<UNIQUE>>
+  * email : VARCHAR(255) <<UNIQUE>>
+  * password : VARCHAR(255)
+  full_name : VARCHAR(255)
+  description : TEXT ' Author Bio / User Profile description
+  * plan : ENUM('FREE','GROUP','PREMIUM')
+  role_id : INT <<FK>>
+  active : BIT(1)
+  streak_days : INT
+  completed_steps_count : INT
+  status : INT
+  created_at : DATETIME
+  updated_at : DATETIME
+}
+
+entity "topics" as topics {
+  * id : INT <<PK>>
+  --
+  code : VARCHAR(50) <<UNIQUE>> ' TOPIC-00001 / BLOG-00001
+  author_id : INT <<FK>> ' Owner (AUTHOR/ADMIN)
+  * title : VARCHAR(255) <<UNIQUE>>
+  description : LONGTEXT
+  emoji : VARCHAR(255)
+  level_label : VARCHAR(255)
+  estimated_hours : INT
+  * access_level : ENUM('FREE','GROUP','PREMIUM','REWARDED')
+  approval_status : VARCHAR(20) ' DRAFT, PENDING, APPROVED, REJECTED
+  rejection_reason : TEXT
+  status : INT
+  created_at : DATETIME
+  updated_at : DATETIME
+}
+
+entity "categories" as categories {
+  * id : INT <<PK>>
+  --
+  * title : VARCHAR(255) <<UNIQUE>>
+  description : LONGTEXT
+  status : INT
+  created_at : DATETIME
+  updated_at : DATETIME
+}
+
+entity "topic_categories" as topic_categories {
+  * topic_id : INT <<FK>>
+  * category_id : INT <<FK>>
+}
+
+entity "tags" as tags {
+  * id : INT <<PK>>
+  --
+  * name : VARCHAR(255) <<UNIQUE>>
+}
+
+entity "topic_tags" as topic_tags {
+  * topic_id : INT <<FK>>
+  * tag_id : INT <<FK>>
+}
+
+entity "lessons" as lessons {
+  * id : INT <<PK>>
+  --
+  code : VARCHAR(50) <<UNIQUE>> ' LSN-00001
+  * topic_id : INT <<FK>>
+  author_id : INT <<FK>>
+  * title : VARCHAR(255)
+  summary : LONGTEXT
+  order_index : INT
+  * access_level : ENUM('FREE','GROUP','PREMIUM','REWARDED')
+  estimated_minutes : INT
+  status : INT
+  created_at : DATETIME
+  updated_at : DATETIME
+}
+
+entity "steps" as steps {
+  * id : INT <<PK>>
+  --
+  code : VARCHAR(50) <<UNIQUE>> ' STEP-00001
+  * lesson_id : INT <<FK>>
+  author_id : INT <<FK>>
+  * title : VARCHAR(150)
+  summary : LONGTEXT
+  order_index : INT
+  access_level : VARCHAR(20)
+  note : LONGTEXT
+  theory : LONGTEXT
+  code_snippet : LONGTEXT
+  code_language : VARCHAR(30)
+  checklist_json : LONGTEXT
+  pass_threshold : INT
+  estimated_minutes : INT
+  xp_reward : INT
+  approval_status : VARCHAR(20) ' DRAFT, PENDING, APPROVED, REJECTED
+  rejection_reason : TEXT
+  status : INT
+  created_at : DATETIME
+  updated_at : DATETIME
+}
+
+entity "content_blocks" as content_blocks {
+  * id : INT <<PK>>
+  --
+  step_id : INT <<FK>>
+  block_type : VARCHAR(50)
+  title : LONGTEXT
+  body : LONGTEXT
+  items_json : LONGTEXT
+  media_url : LONGTEXT
+  caption : LONGTEXT
+  code_language : VARCHAR(255)
+  order_index : INT
+  status : INT
+  created_at : DATETIME
+  updated_at : DATETIME
+}
+
+entity "quiz_questions" as quiz_questions {
+  * id : INT <<PK>>
+  --
+  step_id : INT <<FK>>
+  prompt : LONGTEXT
+  options_json : LONGTEXT
+  correct_index : INT
+  status : INT
+  created_at : DATETIME
+  updated_at : DATETIME
+}
+
+entity "step_prerequisites" as step_prerequisites {
+  * step_id : INT <<FK>>
+  * prerequisite_step_id : INT <<FK>>
+}
+
+entity "learning_groups" as learning_groups {
+  * id : INT <<PK>>
+  --
+  * title : VARCHAR(255)
+  description : TEXT
+  expired_at : DATETIME
+  status : INT
+  created_at : DATETIME
+  updated_at : DATETIME
+}
+
+entity "group_members" as group_members {
+  * group_id : INT <<FK>>
+  * user_id : INT <<FK>>
+}
+
+entity "group_topics" as group_topics {
+  * group_id : INT <<FK>>
+  * topic_id : INT <<FK>>
+}
+
+entity "user_step_progress" as user_step_progress {
+  * id : INT <<PK>>
+  --
+  * user_id : INT <<FK>>
+  * step_id : INT <<FK>>
+  progress_status : ENUM('COMPLETED','IN_PROGRESS','NOT_STARTED')
+  completed_checklist_json : LONGTEXT
+  quiz_score : INT
+  last_accessed_at : DATETIME
+  status : INT
+  created_at : DATETIME
+  updated_at : DATETIME
+}
+
+entity "plan_requests" as plan_requests {
+  * id : BIGINT <<PK>>
+  --
+  user_id : INT <<FK>>
+  name : VARCHAR(255)
+  phone : VARCHAR(50)
+  content : TEXT
+  status : VARCHAR(30)
+  admin_note : TEXT
+  created_at : DATETIME
+  updated_at : DATETIME
+}
+
+' Relationships
+roles ||--o{ users : "assigns"
+users ||--o{ topics : "creates / owns (Author)"
+users ||--o{ lessons : "creates / owns"
+users ||--o{ steps : "creates / owns (Author)"
+users ||--o{ user_step_progress : "tracks"
+users ||--o{ plan_requests : "submits"
+
+topics ||--o{ lessons : "contains"
+topics ||--o{ topic_categories : "categorizes"
+categories ||--o{ topic_categories : "belongs to"
+topics ||--o{ topic_tags : "tags"
+tags ||--o{ topic_tags : "belongs to"
+topics ||--o{ group_topics : "assigned to"
+learning_groups ||--o{ group_topics : "includes"
+
+lessons ||--o{ steps : "contains"
+steps ||--o{ content_blocks : "has blocks"
+steps ||--o{ quiz_questions : "has quizzes"
+steps ||--o{ step_prerequisites : "requires"
+steps ||--o{ user_step_progress : "completed by"
+
+learning_groups ||--o{ group_members : "has members"
+users ||--o{ group_members : "belongs to"
+
+@enduml

@@ -65,6 +65,9 @@ function normalizeRole(value) {
   if (normalized === 'ROLE_ADMIN' || normalized === 'ADMIN') {
     return 'ADMIN';
   }
+  if (normalized === 'ROLE_AUTHOR' || normalized === 'AUTHOR') {
+    return 'AUTHOR';
+  }
   return 'USER';
 }
 
@@ -139,7 +142,11 @@ function mapStepRow(row, options = {}) {
 
   return {
     id: toStringId(row.id),
+    code: row.code || `STEP-${String(row.id).padStart(5, '0')}`,
     lessonId: toStringId(row.lesson_id ?? row.lessonId),
+    authorId: row.author_id ? toStringId(row.author_id) : null,
+    approvalStatus: String(row.approval_status || row.approvalStatus || 'APPROVED').toUpperCase(),
+    rejectionReason: row.rejection_reason || row.rejectionReason || null,
     title: row.title || '',
     summary: row.summary || '',
     description: row.summary || row.description || '',
@@ -177,7 +184,9 @@ function mapLessonRow(row, options = {}) {
 
   return {
     id: toStringId(row.id),
+    code: row.code || `LSN-${String(row.id).padStart(5, '0')}`,
     topicId: toStringId(row.topic_id ?? row.topicId),
+    authorId: row.author_id ? toStringId(row.author_id) : null,
     title: row.title || '',
     summary: row.summary || '',
     description: row.summary || row.description || '',
@@ -201,6 +210,10 @@ function mapTopicRow(row, options = {}) {
 
   return {
     id: toStringId(row.id),
+    code: row.code || `BLOG-${String(row.id).padStart(5, '0')}`,
+    authorId: row.author_id ? toStringId(row.author_id) : null,
+    approvalStatus: String(row.approval_status || row.approvalStatus || 'APPROVED').toUpperCase(),
+    rejectionReason: row.rejection_reason || row.rejectionReason || null,
     title: row.title || '',
     description: row.description || '',
     emoji: row.emoji || 'book',
@@ -237,10 +250,12 @@ function mapUserRow(row, options = {}) {
   const groups = options.groups || [];
   return {
     id: toStringId(row.id),
+    code: row.code || `USR-${String(row.id).padStart(5, '0')}`,
     username: row.username || row.user_name || '',
     name: row.fullName || row.full_name || row.name || row.user_name || 'Learning Student',
     fullName: row.fullName || row.full_name || row.name || row.user_name || 'Learning Student',
     email: row.email || '',
+    description: row.description || '',
     plan: normalizeLearningPlan(row.plan),
     active: row.active === undefined ? true : Boolean(row.active),
     streakDays: toInt(row.streakDays ?? row.streak_days, 0),
@@ -250,6 +265,7 @@ function mapUserRow(row, options = {}) {
     groups,
   };
 }
+
 
 module.exports = {
   parseJsonArray,
