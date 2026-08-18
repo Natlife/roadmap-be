@@ -26,8 +26,6 @@ async function upsertTopic(topic, db = pool) {
   ];
 
   if (id != null) {
-    await db.query(
-  if (id != null) {
     try {
       await db.query(
         `INSERT INTO topics (id, title, description, emoji, level_label, estimated_hours, access_level, author_id, approval_status, rejection_reason, status)
