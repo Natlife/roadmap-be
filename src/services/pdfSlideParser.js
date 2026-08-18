@@ -132,14 +132,24 @@ async function parsePdfSlides(pdfBuffer) {
           if (
             fn === pdfjsLib.OPS.paintImageXObject ||
             fn === pdfjsLib.OPS.paintJpegXObject ||
-            fn === pdfjsLib.OPS.paintInlineImageXObject
+            fn === pdfjsLib.OPS.paintInlineImageXObject ||
+            fn === pdfjsLib.OPS.paintImageMaskXObject
           ) {
             const imgName = opList.argsArray[j]?.[0];
             if (!imgName) continue;
 
             await new Promise((resolve) => {
-              page.objs.get(imgName, (img) => {
-                if (img && img.data && img.width > 50 && img.height > 50) {
+              const fetchObj = page.objs.has(imgName)
+                ? page.objs
+                : (page.commonObjs && page.commonObjs.has(imgName) ? page.commonObjs : null);
+
+              if (!fetchObj) {
+                resolve();
+                return;
+              }
+
+              fetchObj.get(imgName, (img) => {
+                if (img && img.data && img.width > 30 && img.height > 30) {
                   const area = img.width * img.height;
                   if (!largestImage || area > largestImage.area) {
                     largestImage = { ...img, area };
