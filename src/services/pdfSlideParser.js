@@ -52,6 +52,63 @@ function createPngBuffer(width, height, pixelBuffer, kind = 3) {
 }
 
 /**
+ * Evaluates whether an image buffer contains real visual content (vs solid fill/blank mask).
+ */
+function isContentImage(width, height, pixelBuffer, kind = 3) {
+  if (!pixelBuffer || width < 40 || height < 40) return false;
+
+  const bytesPerPixel = kind === 2 ? 3 : 4;
+  const totalPixels = width * height;
+  const sampleStep = Math.max(1, Math.floor(totalPixels / 2000));
+
+  let sumR = 0, sumG = 0, sumB = 0;
+  let sampleCount = 0;
+  let nonTransparentCount = 0;
+
+  for (let i = 0; i < pixelBuffer.length; i += sampleStep * bytesPerPixel) {
+    const r = pixelBuffer[i];
+    const g = pixelBuffer[i + 1];
+    const b = pixelBuffer[i + 2];
+    const a = bytesPerPixel === 4 ? pixelBuffer[i + 3] : 255;
+
+    if (a > 15) {
+      nonTransparentCount++;
+      sumR += r;
+      sumG += g;
+      sumB += b;
+      sampleCount++;
+    }
+  }
+
+  if (sampleCount < 50 || (nonTransparentCount / (totalPixels / sampleStep)) < 0.05) {
+    return false;
+  }
+
+  const meanR = sumR / sampleCount;
+  const meanG = sumG / sampleCount;
+  const meanB = sumB / sampleCount;
+
+  let varianceSum = 0;
+
+  for (let i = 0; i < pixelBuffer.length; i += sampleStep * bytesPerPixel) {
+    const r = pixelBuffer[i];
+    const g = pixelBuffer[i + 1];
+    const b = pixelBuffer[i + 2];
+    const a = bytesPerPixel === 4 ? pixelBuffer[i + 3] : 255;
+
+    if (a > 15) {
+      const diffR = r - meanR;
+      const diffG = g - meanG;
+      const diffB = b - meanB;
+      varianceSum += (diffR * diffR + diffG * diffG + diffB * diffB);
+    }
+  }
+
+  const colorVariance = varianceSum / sampleCount;
+  return colorVariance > 200;
+}
+
+/**
  * Parses an uploaded PDF slide deck buffer:
  * 1. Extracts text line by line for each page.
  * 2. Extracts embedded slide images from each page and saves them into upload/slides/.
@@ -61,57 +118,55 @@ async function parsePdfSlides(pdfBuffer) {
   if (!pdfBuffer || !pdfBuffer.length) {
     throw ApiError.badRequest('No PDF data provided');
   }
-
-  const uploadDir = path.join(__dirname, '..', '..', 'upload', 'slides');
-  if (!fs.existsSync(uploadDir)) {
-    fs.mkdirSync(uploadDir, { recursive: true });
-  }
-
   try {
     const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.mjs');
+
     const data = new Uint8Array(pdfBuffer);
     const doc = await pdfjsLib.getDocument({ data }).promise;
     const numPages = doc.numPages;
-    const slides = [];
 
     const timestamp = Date.now();
+    const uploadDir = path.join(__dirname, '..', '..', 'upload', 'slides');
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+
+    const slides = [];
 
     for (let i = 1; i <= numPages; i++) {
       const page = await doc.getPage(i);
 
-      // --- 1. Extract Page Text ---
-      const content = await page.getTextContent();
+      // --- 1. Extract Text & Preserve Paragraph Structure ---
+      const textContent = await page.getTextContent();
+      const items = textContent.items;
+
       const textLines = [];
       let currentLine = '';
       let lastY = null;
       let lastXEnd = null;
 
-      for (const item of content.items) {
-        if (!item.str && item.str !== ' ') continue;
-        const x = item.transform ? item.transform[4] : null;
-        const y = item.transform ? item.transform[5] : null;
+      for (const item of items) {
+        if (!item.str) continue;
+        const transform = item.transform; // [scaleX, skewY, skewX, scaleY, translateX, translateY]
+        const x = transform ? transform[4] : null;
+        const y = transform ? transform[5] : null;
         const width = item.width || 0;
 
-        if (lastY !== null && Math.abs(y - lastY) > 5) {
-          if (currentLine.trim()) textLines.push(currentLine.trim());
-          currentLine = '';
-          lastXEnd = null;
-        }
-
-        // Insert space only when spatial distance between text items on the same line exceeds 4px (prevents word fragmentation on Vietnamese PDF fonts)
-        let needSpace = false;
-        if (
-          currentLine.length > 0 &&
-          !currentLine.endsWith(' ') &&
-          !item.str.startsWith(' ')
-        ) {
-          if (lastXEnd !== null && x !== null && x - lastXEnd > 4) {
-            needSpace = true;
+        if (lastY !== null && Math.abs(y - lastY) > 3) {
+          if (currentLine.trim()) {
+            textLines.push(currentLine.trim());
           }
+          currentLine = item.str;
+        } else {
+          if (lastXEnd !== null && x !== null && x - lastXEnd > 4 && currentLine.length > 0) {
+            currentLine += ' ';
+          }
+          currentLine += item.str;
         }
 
-        currentLine += (needSpace ? ' ' : '') + item.str;
-        lastY = y;
+        if (y !== null) {
+          lastY = y;
+        }
         if (x !== null) {
           lastXEnd = x + width;
         }
@@ -121,11 +176,11 @@ async function parsePdfSlides(pdfBuffer) {
       const rawText = textLines.join('\n');
       const htmlText = textLines.map((l) => `<p>${l}</p>`).join('');
 
-      // --- 2. Extract Embedded Image from Page ---
-      let slideImageUrl = '';
+      // --- 2. Extract Embedded Images from Page ---
+      const extractedImageUrls = [];
       try {
         const opList = await page.getOperatorList();
-        let largestImage = null;
+        const validSlideImages = [];
 
         for (let j = 0; j < opList.fnArray.length; j++) {
           const fn = opList.fnArray[j];
@@ -155,26 +210,27 @@ async function parsePdfSlides(pdfBuffer) {
               });
             }
 
-            if (fetchedImg && fetchedImg.data && fetchedImg.width > 30 && fetchedImg.height > 30) {
+            if (
+              fetchedImg &&
+              fetchedImg.data &&
+              isContentImage(fetchedImg.width, fetchedImg.height, fetchedImg.data, fetchedImg.kind)
+            ) {
               const area = fetchedImg.width * fetchedImg.height;
-              if (!largestImage || area > largestImage.area) {
-                largestImage = { ...fetchedImg, area };
-              }
+              validSlideImages.push({ ...fetchedImg, area });
             }
           }
         }
 
-        if (largestImage && largestImage.data) {
-          const filename = `slide_${timestamp}_p${i}_${Math.random().toString(36).slice(2, 6)}.png`;
+        // Sort by visual area so main screenshot comes first
+        validSlideImages.sort((a, b) => b.area - a.area);
+
+        for (let imgIdx = 0; imgIdx < validSlideImages.length; imgIdx++) {
+          const img = validSlideImages[imgIdx];
+          const filename = `slide_${timestamp}_p${i}_img${imgIdx + 1}_${Math.random().toString(36).slice(2, 6)}.png`;
           const filePath = path.join(uploadDir, filename);
-          const pngBuffer = createPngBuffer(
-            largestImage.width,
-            largestImage.height,
-            largestImage.data,
-            largestImage.kind
-          );
+          const pngBuffer = createPngBuffer(img.width, img.height, img.data, img.kind);
           fs.writeFileSync(filePath, pngBuffer);
-          slideImageUrl = `/upload/slides/${filename}`;
+          extractedImageUrls.push(`/upload/slides/${filename}`);
         }
       } catch (imgErr) {
         console.warn(`[pdfSlideParser] Could not extract image for page ${i}:`, imgErr.message);
@@ -185,7 +241,8 @@ async function parsePdfSlides(pdfBuffer) {
         title: `Slide ${i}`,
         text: rawText,
         html: htmlText,
-        imageUrl: slideImageUrl,
+        imageUrl: extractedImageUrls[0] || '',
+        imageUrls: extractedImageUrls,
       });
     }
 
