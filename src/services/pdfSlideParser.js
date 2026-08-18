@@ -138,26 +138,29 @@ async function parsePdfSlides(pdfBuffer) {
             const imgName = opList.argsArray[j]?.[0];
             if (!imgName) continue;
 
+            let fetchedImg = null;
             await new Promise((resolve) => {
-              const fetchObj = page.objs.has(imgName)
-                ? page.objs
-                : (page.commonObjs && page.commonObjs.has(imgName) ? page.commonObjs : null);
-
-              if (!fetchObj) {
-                resolve();
-                return;
-              }
-
-              fetchObj.get(imgName, (img) => {
-                if (img && img.data && img.width > 30 && img.height > 30) {
-                  const area = img.width * img.height;
-                  if (!largestImage || area > largestImage.area) {
-                    largestImage = { ...img, area };
-                  }
-                }
+              page.objs.get(imgName, (img) => {
+                if (img) fetchedImg = img;
                 resolve();
               });
             });
+
+            if (!fetchedImg && page.commonObjs) {
+              await new Promise((resolve) => {
+                page.commonObjs.get(imgName, (img) => {
+                  if (img) fetchedImg = img;
+                  resolve();
+                });
+              });
+            }
+
+            if (fetchedImg && fetchedImg.data && fetchedImg.width > 30 && fetchedImg.height > 30) {
+              const area = fetchedImg.width * fetchedImg.height;
+              if (!largestImage || area > largestImage.area) {
+                largestImage = { ...fetchedImg, area };
+              }
+            }
           }
         }
 
